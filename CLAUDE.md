@@ -1,14 +1,22 @@
 # CLAUDE.md
 
-Read `SESSION_HANDOFF.md` before changing this project.
+Read `SESSION_HANDOFF.md` and `docs/ARCHITECTURE.md` before changing this
+project. The handoff covers current state; the architecture doc covers the
+client/server target and the decisions behind it.
 
-This is the PlayCanvas/Vite browser prototype for Fire Drake Simulator. The
-linked Unreal Engine source project is:
+This is the browser client for Fire Drake Simulator, targeting multiplayer
+client/server. Linked projects:
 
-`/Users/martinboros/SRC/FireDrakeGame_UE`
+- `/Users/martinboros/SRC/void_forge-ws/forge-trunk` — **forge**, the in-house
+  deterministic fixed-point engine. It is Fire Drake's simulation substrate.
+- `/Users/martinboros/SRC/FireDrakeGame_UE` — the Unreal project, **reference
+  only**.
 
-The worktree contains substantial uncommitted user work. Do not reset, delete,
-or regenerate it as cleanup.
+Version control is **void**, not git. Ignore rules live in `.ignore`, not
+`.gitignore`. Use `void status`, `void add`, `void commit`.
+
+The worktree contains substantial user work and ~155 MB of assets excluded from
+version control. Do not reset, delete, or regenerate it as cleanup.
 
 ## Core commands
 
@@ -22,7 +30,9 @@ Use `src/tuning.ts` for bounded camera/movement/model tuning. Preserve
 `window.__FIRE_DRAKE_DEBUG__` because the Playwright tests and MCP workflow
 depend on it.
 
-The extracted Unreal sector is available at `/?level=extracted`. Before
-expanding it, read `docs/forest-sector-iteration-1.md` and fix transform/terrain
-fidelity in the order recorded in `SESSION_HANDOFF.md`.
+The Unreal FBX-to-GLB extraction pipeline is **retired**. The extracted sector
+at `/?level=extracted` remains loadable as a historical artifact and rendering
+load test, but the "Recommended iteration 2" list in
+`docs/forest-sector-iteration-1.md` is superseded and should not be worked.
+Levels are authored browser-native. See `docs/ARCHITECTURE.md`.
 

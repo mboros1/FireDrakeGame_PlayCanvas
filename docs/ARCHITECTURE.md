@@ -1,0 +1,332 @@
+# Fire Drake — client/server architecture
+
+Date: 2026-07-25
+
+## What this is
+
+The target architecture for Fire Drake as a multiplayer browser game: a
+slapstick third-person sandbox in the spirit of Goat Simulator, starring a fire
+drake in a medieval fantasy world.
+
+This supersedes the "Recommended next iteration" section of the July 24
+`SESSION_HANDOFF.md`, which described continued fidelity work on the extracted
+Unreal forest sector. That work is retired — see *Decisions* below.
+
+## Decisions
+
+These are settled. Where a decision closed off a plausible alternative, the
+reason is recorded so it doesn't get relitigated by default.
+
+### Unreal is reference-only
+
+The UE project at `/Users/martinboros/SRC/FireDrakeGame_UE` remains the design
+reference and the source of the character assets already exported (wyvern,
+dwarf). The FBX → GLB → manifest extraction pipeline is **not** continued.
+
+Iteration 1 produced a recognizable but broken diorama: 487 transforms with
+incorrect Euler conversion, no landscape, no authored materials, and 16 MiB for
+a 30 m radius. The remaining work — quaternion basis conversion, cropped
+heightmap export, explicit PBR material mapping, GPU instancing — is a
+multi-session project whose output is static scenery. The gameplay logic worth
+keeping is roughly a thousand lines of straightforward C++ that is faster to
+rewrite than to port.
+
+Levels are authored browser-native from here.
+
+### forge is the simulation substrate
+
+`~/SRC/void_forge-ws/forge-trunk` — the in-house engine — owns the simulation.
+Fire Drake is forge's first game and its forcing function.
+
+The alternative was Rapier, which is faster to a playable prototype because its
+colliders, terrain, and contact resolution all exist today. It was rejected on
+one property: **Rapier's `enhanced-determinism` feature cannot be enabled
+alongside `parallel` or `simd`**, forcing a permanent choice between
+deterministic simulation and multi-threaded physics.
+
+forge has no such conflict. Its `Fx` type is `i32`-backed Q16.16 fixed point,
+and integer arithmetic is bit-exact on x86, ARM, and wasm32 alike — there is no
+IEEE-754 divergence to trade away. forge can be deterministic *and* parallel
+simultaneously. `forge/docs/designs/in_progress/02_PHYSICS.md` makes the same
+argument from first principles.
+
+The cost is real and is accepted: forge currently has sphere colliders only, no
+contact resolution, and no terrain. See
+`forge/docs/designs/in_progress/10_CONTACTS_AND_COLLIDERS.md` for the roadmap
+and `11_BROWSER_TARGET.md` for the wasm32 work.
+
+### The server is a native remote binary
+
+A dedicated Rust server process, running remotely, authoritative over
+simulation. Not WASM, not peer-hosted.
+
+Player-hosted sessions (the Warframe model) were considered seriously. They fit
+the genre — co-op chaos has no competitive integrity requirement — and WASM
+threads mean a browser host is not compute-limited. They were rejected on
+residential upload bandwidth, host hardware variance, background-tab throttling,
+and host migration, which remains the most-complained-about part of Warframe
+after a decade of work by a much larger team.
+
+forge's own `08_DISTRIBUTED_WORLD.md` reaches the same v1 conclusion
+independently: *"each region is owned by exactly one server process at any
+moment."*
+
+This is revisitable. Because the simulation is one Rust crate compiled to both
+native and wasm32, "who hosts a session" is a deployment decision, not an
+architectural one. Opt-in peer-hosted private games can be added later without a
+second implementation.
+
+### Transport is WebTransport
+
+WebTransport reached Baseline in March 2026 when Safari 26.4 shipped it, so it
+now works in every current browser without a polyfill. It provides unreliable,
+unordered datagrams — the correct primitive for state sync, and what WebSocket's
+TCP head-of-line blocking cannot give.
+
+The earlier plan of "start on WebSocket, migrate later" is unnecessary. Server
+side: `wtransport`.
+
+### Discovery splits by rate of change
+
+- **Game server directory → the void board.** Servers are few, long-lived, and
+  slow-changing. A server publishing its region, capacity, and address on a
+  refresh interval is exactly the durability profile Nostr relays handle well.
+  Clients find servers with no central index.
+- **Room and session state → the game server.** Fast, ephemeral, high-churn, and
+  needs consistency for slot allocation. The client is already connected; the
+  server hands it the room list over that connection.
+
+Putting live session listings on relays was rejected: replaceable events
+propagate on a seconds-to-minutes horizon, sessions churn every few minutes, and
+latency-sorted matchmaking needs RTT probing a relay cannot do.
+
+This is the same authority-split-by-stakes principle Warframe uses — Digital
+Extremes' servers own matchmaking and the account economy; the distributed part
+owns the session.
+
+## The shape
+
+```
+┌─────────────────── browser ───────────────────┐
+│  PlayCanvas (renderer + input + HUD)          │
+│         ▲ reads transforms                    │
+│  forge (wasm32) — local prediction            │
+│         ▲ WebTransport datagrams              │
+└─────────┼─────────────────────────────────────┘
+          │ inputs up / snapshots down
+┌─────────▼─────────── server ──────────────────┐
+│  forge (native) — authoritative simulation    │
+│  rooms sharded across cores                   │
+└───────────────────────────────────────────────┘
+
+  assets: void gateway (/ipfs/<cid>/…), content-addressed
+  discovery: void board (NIP-34 30617/30618)
+```
+
+One simulation crate. Two compilation targets. PlayCanvas never owns gameplay
+state.
+
+## Simulation
+
+forge provides the substrate:
+
+- `forge-storage` — slab-major SoA (`Slab`, `World`, `SoaStore`, `AnyPool`).
+- `forge-bus` — task scheduler with a dependency graph, worker pool, priority
+  and cadence, panic isolation, and cascade propagation. Phases 1–4 shipped.
+- `forge-physics` — fixed-point integrator and colliders.
+
+Game code adds Fire Drake's rules — drake locomotion and flight, dwarf AI, fire
+breath, burn state — as registered bus tasks declaring their column reads and
+writes.
+
+**Determinism is load-bearing, not incidental.** It buys three things:
+
+1. Client prediction that matches the server bit-for-bit, so corrections are
+   rare rather than constant.
+2. Rollback netcode as an available option.
+3. **Replays as input logs.** A whole session is an initial-state CID plus a
+   list of inputs — kilobytes, content-addressable, and replayable to identical
+   results by anyone. This falls out nearly free and is worth protecting.
+
+Anything that breaks determinism — wall-clock reads, uncontrolled iteration
+order, floats leaking into simulation state — is a bug, not a tradeoff.
+
+## Rendering
+
+PlayCanvas is demoted to a view layer. It owns cameras, materials, meshes,
+particles, HUD, and input capture. It owns no gameplay state.
+
+forge's `07_RENDERING_AND_SCENES.md` already models this as "renderer as an
+outbound flume subscriber on its own thread." In the browser the same seam is a
+read of simulation state after each step.
+
+**The WASM boundary must not be crossed per entity.** One call per frame;
+transforms come back as a pointer into linear memory that JS reads as a typed
+array with no copying:
+
+```rust
+#[wasm_bindgen]
+impl Sim {
+    pub fn set_local_input(&mut self, bits: u32, yaw: f32, pitch: f32);
+    pub fn step(&mut self, dt: f32);
+    pub fn ingest_snapshot(&mut self, ptr: *const u8, len: usize);
+    pub fn transforms_ptr(&self) -> *const f32;  // SoA: [x,y,z,qx,qy,qz,qw] × n
+    pub fn entity_count(&self) -> usize;
+}
+```
+
+Two gotchas to hold onto:
+
+- **`wasm.memory.buffer` detaches whenever WASM memory grows.** The
+  `Float32Array` view must be rebuilt after growth, never cached indefinitely.
+- The same buffer can feed PlayCanvas GPU instancing directly, which is also the
+  answer to rendering dense foliage.
+
+`src/tuning.ts` stays on the JS side and stays live-tunable. A Rust rebuild is
+seconds where Vite HMR is sub-second, and the fast feel-iteration loop is the
+main advantage this prototype has over the Unreal build. Only structural
+simulation changes should pay the compile.
+
+## Networking
+
+Client sends **inputs** — button bits, look angles, a sequence number. Never
+positions. Server simulates on its own fixed tick and returns authoritative
+state tagged with the last input sequence consumed. The client compares against
+its own prediction for that sequence, and on mismatch discards its version,
+snaps to the server's, and replays newer inputs.
+
+The wire format is decoded in Rust on both ends via `postcard`. JS never parses
+it.
+
+Prediction scope: predict the local drake, interpolate everything else. Nobody
+notices 100 ms of latency on a dwarf they aren't controlling.
+
+## Security model
+
+Client-side prediction is **not** a source of truth. It is a rendering
+optimization, overwritten the moment authoritative state arrives. A player who
+patches their local simulation sees the effect for one round trip and then
+rubber-bands; no other player ever sees it.
+
+A thin client is not more secure — it still sends forgeable inputs, and the trust
+boundary is identical. Security is not a reason to choose a prediction model.
+
+The real surface, and the rules:
+
+- **Never integrate using a client-supplied `dt` or timestamp.** The server owns
+  the tick; client timing is advisory only.
+- **Clamp input consumption to the server's tick budget.** Unbounded input
+  ingestion is a speed hack.
+- **The server owns hit detection.** The current `hitDwarves()` cone test in
+  `src/main.ts` moves server-side and never comes back. Never accept "I hit X"
+  from a client.
+- **Bound any lag-compensation rewind window**, or inflated reported latency buys
+  a larger one.
+- **Interest management.** Only send state for what a client should see. This is
+  the one cheat class prediction cannot address, and it is also a bandwidth win.
+
+Authority is a per-mechanic decision. Fire breath must be server-authoritative;
+wing-flap animation state or a cosmetic roar can be client-authoritative at no
+real risk.
+
+Stakes are low — a chaos sandbox has no ladder or economy to protect — so this
+does not warrant anti-cheat investment. But the discipline is free if built in
+from the start and expensive to retrofit once gameplay has grown around client
+assertions.
+
+## Assets and delivery
+
+**Content-address assets from day one**, even while serving from a plain static
+host. This is the single decision that keeps every later option open: the origin
+can move, and peer-assisted distribution can slot in beneath the loader, without
+touching game code. Retrofitting content addressing through every asset path is
+the expensive alternative.
+
+The void gateway (`crates/gateway`) is the intended origin. `/ipfs/:cid/*path`
+already serves directory trees with `Cache-Control: public, max-age=31536000,
+immutable`, ETags, range requests, permissive CORS, compression, and HTTPS with
+HTTP/2 and HTTP/3.
+
+Constraints to respect:
+
+- **Keep the origin swappable behind one config value.** At the time of writing
+  `eu.voidtrunk.net` and `us.voidtrunk.net` both return 502. Self-hosted
+  infrastructure under active development should not be a single point of
+  failure for the game loading at all.
+- **Two PoPs is not a CDN.** Fine for a prototype; players outside NA/EU will
+  feel a 155 MB first load.
+- **Verify `.wasm` is served as `application/wasm`**, or
+  `WebAssembly.instantiateStreaming` fails.
+- **Cross-origin isolation vs. cross-origin assets.** WASM threads require
+  `SharedArrayBuffer`, which requires `COOP: same-origin` + `COEP: require-corp`.
+  A cross-origin-isolated page refuses cross-origin subresources that lack
+  `Cross-Origin-Resource-Policy`. Permissive CORS does not imply CORP — they are
+  separate headers. The gateway change is tracked in void.
+- **Serve games from a distinct hostname** from any void board UI. Same-origin
+  means shared `localStorage` and cookies, and void deliberately keeps keys out
+  of the browser via the native-messaging signer. One DNS record now; painful to
+  retrofit once links circulate.
+
+The mutable-pointer problem is already solved upstream: `REPO_STATE_KIND`
+(30618) is a signed, replaceable pointer whose `published-root` tag names
+exactly the CID `/ipfs/<root>/` serves. A game build is another published root.
+`REPO_KIND` (30617) announcements plus a topic tag give a game registry for
+free, in a NIP-34-standard shape other Nostr clients can read.
+
+## Peer-assisted asset distribution — deferred, deliberately
+
+Browsers can do UDP peer-to-peer via WebRTC DataChannels, and content-addressed
+distribution is *safer* than Warframe-style peer hosting: a peer's bytes either
+hash to the CID or they don't, so no trust is required and no cheating is
+possible. The game server already knows the room roster, so it can act as the
+signaling broker with no DHT, no libp2p, and no bootstrap infrastructure.
+
+It is deferred because the economics do not justify it: peer assist helps only
+first load, residential upload is roughly a tenth of downstream, a swarm is 8–16
+players joining at different times, and 155 GB of egress is free on R2.
+
+The stronger argument for building it is that a browser implementation would be
+a clean-room second implementation of void's block exchange and would likely
+surface the protocol ambiguities behind the current laptop-to-laptop flakiness.
+That is void infrastructure work with independent value, and should be justified
+on those terms rather than on game bandwidth.
+
+## Phasing
+
+Playable at every step.
+
+1. **Renderer/state seam.** Split `src/main.ts` into a `WorldState` producer and
+   a PlayCanvas consumer. No Rust yet. This defines the ABI. Both Playwright
+   tests stay green.
+2. **forge physics to a playable floor.** `Fx::sqrt`, segment-segment closest
+   point, capsule colliders, contact manifolds, terrain. Tracked in forge doc 10.
+3. **forge to wasm32.** `WorkerPool` platform seam, then swap TS movement for
+   forge calls. Still single-player. The existing test suite is the gate.
+4. **Server.** Same crate, native, authoritative, one room, WebTransport,
+   prediction and reconciliation.
+5. **Gameplay.** Flight, ragdoll dwarves, knockable props, multiplayer.
+
+Step 2 is the long pole and the accepted cost of choosing forge.
+
+## Open questions
+
+- **Room size and topology.** Assumed 8–16 players per room, rooms sharded
+  across cores, which keeps forge's parallelism at the room level. A single
+  large persistent world would change slab partitioning and interest management
+  substantially.
+- **Rotational dynamics timing.** `02_PHYSICS.md` specifies `QuatFx` and full
+  inertia tensors. Axis-locked capsules are enough for characters and defer all
+  of it. When ragdolls arrive, this reopens.
+- **Terrain representation.** Heightfield versus authored collision geometry,
+  and whether the drake's flight needs a different broadphase than ground
+  movement.
+- **Whether the gateway is the only origin** or one of several behind the
+  swappable config value.
+
+## Preserved constraints
+
+- `window.__FIRE_DRAKE_DEBUG__` must survive every refactor. The Playwright
+  suite and the MCP workflow both depend on it, and it is how the forge port
+  gets verified against the current behavior.
+- The worktree holds substantial uncommitted user work and ~155 MB of assets
+  excluded via `.ignore`. Do not reset, delete, or regenerate as cleanup.

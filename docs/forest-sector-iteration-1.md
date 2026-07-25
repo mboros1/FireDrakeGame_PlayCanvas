@@ -2,6 +2,12 @@
 
 Date: 2026-07-24
 
+> **Status: superseded (2026-07-25).** This records a completed experiment and
+> its findings, which remain accurate. The extraction pipeline is **retired** and
+> the "Recommended iteration 2" section below should **not** be worked — Unreal
+> is now reference-only and levels are authored browser-native. See
+> `ARCHITECTURE.md` for the decision and its reasoning.
+
 ## Goal
 
 Test one code-first loop for extracting recognizable level content from Unreal,

@@ -1,26 +1,51 @@
 # Fire Drake PlayCanvas development handoff
 
-Last updated: 2026-07-24
+Last updated: 2026-07-25
 
 ## Read this first
 
-This repository is the code-first browser prototype for:
+This repository is the browser client for:
 
 > A slapstick third-person fantasy sandbox like Goat Simulator, but with a fire
 > drake rampaging through the world.
 
-The Unreal Engine 5.6 source project is:
+The target is multiplayer, client/server, browser-native.
 
-`/Users/martinboros/SRC/FireDrakeGame_UE`
+**Read `docs/ARCHITECTURE.md` before planning any work.** It records the
+client/server design and the decisions behind it. This handoff covers current
+state and how to run things; the architecture doc covers where it is going and
+why.
 
-The PlayCanvas worktree is currently almost entirely uncommitted. Do not reset,
-delete, regenerate, or replace it as cleanup. It contains exported source assets,
-converted runtime assets, tests, screenshots, and the first forest-sector
-migration.
+Two linked projects:
+
+- `/Users/martinboros/SRC/void_forge-ws/forge-trunk` — **forge**, the in-house
+  deterministic fixed-point engine. It is now Fire Drake's simulation substrate,
+  and Fire Drake is forge's first game.
+- `/Users/martinboros/SRC/FireDrakeGame_UE` — the Unreal project. **Reference
+  only.** See below.
+
+## Version control: void, not git
+
+This repository is tracked with **void**, not git. A `.git` directory exists but
+has zero commits and is not used.
+
+```sh
+void status --short
+void log -n 5
+void add <paths> && void commit -m "…"
+```
+
+Ignore rules live in **`.ignore`**, not `.gitignore` — void disables git ignore
+sources entirely and uses the ripgrep/fd convention. `node_modules/`, `.git/`,
+and `.DS_Store` are excluded by void itself.
+
+Excluded from version control and present on disk only: `public/assets/` and
+`assets-source/` (~155 MB), `dist/`, `test-results/`, `playwright-report/`.
+
+The worktree contains substantial user work. Do not reset, delete, or regenerate
+it as cleanup.
 
 ## Current playable prototype
-
-Run:
 
 ```sh
 npm install
@@ -42,200 +67,122 @@ Scenes:
 - `/` starts in the procedural lava cave.
 - Reaching the cave gate transitions through a loading overlay to the
   procedural forest.
-- `/?level=extracted` directly loads the first Unreal forest extraction.
+- `/?level=extracted` loads the archived Unreal forest extraction.
 
-The cave/forest gameplay loop includes:
+The loop includes the exported Fire Drake model and textures, third-person
+follow camera and mouse look, fire-breath particles with cone hit testing,
+forest-only dwarf spawning and wandering, run-plus-flail burning behavior,
+attached fire effects, five-second burn/despawn, and hot module reload that
+preserves scene and player transform.
 
-- the actual exported Fire Drake skeletal model and textures;
-- third-person follow camera and mouse look;
-- fire-breath particles and cone hit testing;
-- forest-only dwarf spawning and wandering;
-- run plus upper-body flailing behavior while burning;
-- attached dwarf fire effects;
-- five-second burn/despawn;
-- hot module reload with scene/player transform preservation.
+## Architecture (as built today)
 
-## Architecture
+- `src/main.ts` — PlayCanvas application, scene construction, drake controller,
+  camera, fire, dwarves, loading transition, extracted-sector loader, and the
+  `window.__FIRE_DRAKE_DEBUG__` automation surface.
+- `src/tuning.ts` — drake scale/orientation/offset, movement and camera feel.
+- `src/style.css` — canvas, HUD, loading presentation.
 
-### Runtime
+Debug API: `getState()`, `teleport(x, z)`,
+`loadScene('cave' | 'forest' | 'forestExtract')`, `resetCamera()`.
 
-- `src/main.ts`
-  - PlayCanvas application and scene construction.
-  - Drake controller, camera, fire, dwarves, loading transition.
-  - Extracted-sector manifest loader.
-  - `window.__FIRE_DRAKE_DEBUG__` automation surface.
-- `src/tuning.ts`
-  - Drake scale/orientation/offset.
-  - Movement and camera feel.
-- `src/style.css`
-  - Canvas/HUD/loading presentation.
+**`window.__FIRE_DRAKE_DEBUG__` must survive every refactor.** The Playwright
+suite and the MCP workflow depend on it, and it is the mechanism for verifying
+the forge port against current behavior.
 
-The debug API exposes:
+`src/main.ts` is a 671-line monolith mixing rendering, input, gameplay, scene
+construction, and asset loading. Splitting it is phase 1 of the architecture doc.
 
-- `getState()`
-- `teleport(x, z)`
-- `loadScene('cave' | 'forest' | 'forestExtract')`
-- `resetCamera()`
+## Runtime assets
 
-### Runtime assets
+`public/assets/wyvern/` — `wyvern.glb`, base-color/normal/emissive textures, and
+exported `idle`, `walk`, `take_off`, `flying`, `flapping` GLBs. The model is
+connected; the animation clips are **not** yet wired to a PlayCanvas animation
+state graph, so the drake renders in bind pose.
 
-`public/assets/wyvern/` contains:
+`public/assets/forest-sector/` — 20 sanitized GLBs plus `forest-sector.json`.
 
-- `wyvern.glb`
-- base-color, normal, and emissive textures
-- exported `idle`, `walk`, `take_off`, `flying`, and `flapping` GLBs
+`assets-source/` — FBX/source artifacts retained for reproducibility.
 
-The real wyvern model is connected, but the animation GLBs are not yet connected
-to a PlayCanvas animation state graph. The visible drake remains in its bind
-pose.
+## Tests and browser automation
 
-`public/assets/forest-sector/` contains:
-
-- 20 sanitized GLBs
-- `forest-sector.json`
-
-`assets-source/` retains FBX/source artifacts from Unreal for reproducibility.
-
-### Tests and browser automation
-
-- `tests/gameplay.spec.ts`
-  - model readiness and facing alignment;
-  - mouse look;
-  - camera-relative movement;
-  - wheel zoom;
-  - fire breath;
-  - procedural forest and dwarf spawning;
-  - console/page-error gate.
-- `tests/extracted-sector.spec.ts`
-  - exact extracted object count;
-  - source-level identity;
-  - load failure and console-error gate;
-  - visual screenshot.
-- `.mcp.json`
-  - headless isolated Playwright MCP at 1440×900.
-
-Run the full loop:
+- `tests/gameplay.spec.ts` — model readiness and facing alignment, mouse look,
+  camera-relative movement, wheel zoom, fire breath, procedural forest and dwarf
+  spawning, console/page-error gate.
+- `tests/extracted-sector.spec.ts` — extracted object count, source-level
+  identity, load-failure and console-error gate, visual screenshot.
+- `.mcp.json` — headless isolated Playwright MCP at 1440×900.
 
 ```sh
-npm run iterate
+npm run iterate    # tsc --noEmit && vite build && playwright test
 ```
 
-Latest successful result:
+Last verified 2026-07-25: build passed, 2 Playwright tests passed, 8.2 s total.
 
-- TypeScript and Vite build passed.
-- 2 Playwright tests passed.
-- Complete build and browser suite: 8.3 seconds locally.
-- Extracted-sector browser load: about 3 seconds locally.
+## Unreal: reference only
 
-The last direct MCP control pass loaded 487 extracted objects, moved the drake
-5.75 m, changed yaw/pitch, zoomed by 2 units, emitted 3 fire particles, and
-reported zero browser errors.
+The FBX → GLB → manifest extraction pipeline is **retired**. Do not continue it.
 
-Screenshots:
+`docs/forest-sector-iteration-1.md` records what it produced and where it fell
+short: 487 transforms with incorrect Euler conversion, absent landscape, absent
+authored materials, and 16 MiB for a 30 m radius. Its "Recommended iteration 2"
+list — quaternion basis conversion, cropped heightmap export, explicit PBR
+material mapping, GPU instancing — is **superseded and should not be worked**.
 
-- `test-results/visual/04-extracted-forest-sector.png`
-- `test-results/visual/forest-sector-iteration-1-mcp.png`
+The extracted sector remains loadable at `/?level=extracted` as a historical
+artifact and a rendering-load test. It is no longer the level the game is being
+built around.
 
-Detailed extraction findings:
+Unreal remains useful as the design reference and as the source of the character
+assets already exported. `docs/ARCHITECTURE.md` records the full reasoning.
 
-- `docs/forest-sector-iteration-1.md`
+## Known problems
 
-## Unreal forest extraction: iteration 1
+Still true and still relevant:
 
-Source level:
+1. **No physics.** Movement is `translate` plus `clamp(-54, 54)`, ground is a
+   hardcoded `y = 0.1`, and hits are distance-and-dot tests. Real collision
+   arrives with forge.
+2. **The drake is enormous** — roughly a 30 m wingspan against a 60 m sector,
+   with the camera effectively inside it. One meter-based scale convention needs
+   settling, then `src/tuning.ts` and camera framing re-tuned.
+3. **The drake is in bind pose.** Animation clips are exported but unconnected.
+4. **No terrain grounding, camera collision, or production physics.**
+5. **`package.json` repeats the Playwright dependency keys.** Normalize during a
+   dedicated dependency pass, not incidentally.
+6. Production JS bundle is ~1.9 MB raw / 488 KiB gzipped before level assets.
 
-`/Game/sA_StylizedForest_Environment/Demo/Levels/Lvl_Color_Alternative`
+Historical, tied to the retired pipeline — recorded so the screenshots make
+sense, not as a work list: sideways and floating foliage, absent landscape,
+category-tint placeholder materials, and one entity per foliage instance.
 
-The Unreal exporter selected a 30 m radius around Player Start:
+## Next work
 
-- 20 unique static meshes;
-- 487 transforms;
-- 30 placed actors;
-- 457 foliage instances;
-- 37,590 nearby grass instances measured and excluded;
-- no FBX export failures.
+Per `docs/ARCHITECTURE.md`, in order:
 
-Pipeline:
+1. **Renderer/state seam.** Split `src/main.ts` into a `WorldState` producer and
+   a PlayCanvas consumer. No Rust yet. This defines the WASM ABI. Both tests
+   stay green.
+2. **forge physics to a playable floor** — tracked in forge's
+   `docs/designs/in_progress/10_CONTACTS_AND_COLLIDERS.md`. This is the long
+   pole and the accepted cost of choosing forge over Rapier.
+3. **forge to wasm32** — the `WorkerPool` platform seam, per forge's
+   `11_BROWSER_TARGET.md`.
+4. **Server** — same crate native, authoritative, one room, WebTransport.
+5. **Gameplay** — flight, ragdolls, props, multiplayer.
 
-1. Run `Scripts/export_forest_sector.py` inside the Unreal editor through MCP.
-2. Convert the emitted FBXs to GLB with Assimp.
-3. Copy GLBs and the manifest into `public/assets/forest-sector/`.
-4. Run `npm run sanitize:forest`.
-5. Run `npm run iterate`.
-
-Why sanitation exists:
-
-Eleven Assimp-converted GLBs retained stale absolute texture paths from the
-marketplace asset author's computer, such as `/Users/anilk/Desktop/...`.
-PlayCanvas rejected those containers. `scripts/sanitize-gltf.mjs` strips the
-unusable texture bindings. The runtime then uses category-colored placeholder
-materials.
-
-Assimp also preserves centimeter-sized vertices and exports `UCX_*` collision
-meshes. The importer currently scales instances by `0.01` and disables collision
-nodes by name.
-
-## Known visual and technical problems
-
-These are expected in the current screenshot:
-
-1. Many foliage meshes are sideways or floating.
-   - Euler transform conversion is only reliable for yaw-only actors.
-   - Replace it with a tested quaternion basis conversion.
-2. The Unreal Landscape is absent.
-   - The extraction uses a flat 60 m ground box.
-   - Export a cropped heightmap/weightmap and ground instances against it.
-3. Authored materials are absent.
-   - Unreal material graphs do not translate to GLB.
-   - Category tints lose bark/leaves, alpha cutouts, normals, and PBR detail.
-4. The drake is enormous relative to the extracted sector.
-   - Reconcile one meter-based scale convention after terrain import.
-   - Re-tune `src/tuning.ts` and camera framing.
-5. The drake is in a bind pose.
-   - Connect the exported animation clips.
-6. No terrain grounding, camera collision, or production physics exists.
-7. The importer creates one entity per foliage transform.
-   - The full forest requires GPU instancing, batching, LODs, culling, and a
-     density policy, especially for grass.
-8. The production JavaScript bundle is about 488 KiB compressed before level
-   assets, and the extracted sector is about 16.1 MiB.
-9. `package.json` currently repeats the Playwright dependency keys; normalize
-   this during a dedicated dependency cleanup, not incidentally.
-
-## Recommended next iteration
-
-Keep the same 30 m extracted sector and work in this order:
-
-1. Implement and unit-test quaternion basis conversion.
-2. Export/import a cropped Unreal Landscape heightmap.
-3. Ground the drake and foliage against the terrain.
-4. Export the small referenced texture set and map explicit PBR materials.
-5. Instance repeated mushrooms, stones, flowers, and trees.
-6. Re-tune drake scale/camera.
-7. Connect idle/walk animation only after world scale and grounding are stable.
-
-The narrow sector should remain the test fixture until placement and terrain are
-visually coherent. Do not expand to the whole forest yet.
+Step 1 is the only one that can start in this repository alone. Steps 2 and 3
+are forge work.
 
 ## Suggested new-session startup
 
 ```sh
 cd /Users/martinboros/SRC/FireDrakeGame_PlayCanvas
+void log -n 3
 npm run iterate
 npm run dev
 ```
 
-Then open `http://127.0.0.1:5173/?level=extracted` or navigate there with
-Playwright MCP.
-
-For a conservative headless Claude Code pass:
-
-```sh
-claude -p \
-  --permission-mode acceptEdits \
-  --output-format json \
-  "Read CLAUDE.md and SESSION_HANDOFF.md. Run npm run iterate, inspect the extracted-sector screenshot, and propose one bounded next change without deleting existing work."
-```
+Then open `http://127.0.0.1:5173/` or navigate there with Playwright MCP.
 
 Do not use `--dangerously-skip-permissions`.
-
