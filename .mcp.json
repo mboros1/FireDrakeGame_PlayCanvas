@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "--no-install",
+        "@playwright/mcp",
+        "--browser",
+        "chrome",
+        "--headless",
+        "--isolated",
+        "--viewport-size",
+        "1440x900"
+      ]
+    }
+  }
+}
