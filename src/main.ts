@@ -411,8 +411,10 @@ function buildCave() {
   sceneName = 'cave';
   camera.camera!.clearColor = new pc.Color(.055, .018, .009);
   app.scene.ambientLight = new pc.Color(.18, .055, .025);
-  makePrimitive('Cave floor', 'box', world, new pc.Vec3(0, -.7, 0), new pc.Vec3(58, .7, 58), mats.rock);
-  makePrimitive('Lava river', 'box', world, new pc.Vec3(0, -.18, 0), new pc.Vec3(8, .18, 58), mats.lava);
+  // The box primitive is a unit cube, so scale is the full extent: 116 spans
+  // +/-58, which is what the movement clamp, portal, and spawns all assume.
+  makePrimitive('Cave floor', 'box', world, new pc.Vec3(0, -.7, 0), new pc.Vec3(116, .7, 116), mats.rock);
+  makePrimitive('Lava river', 'box', world, new pc.Vec3(0, -.18, 0), new pc.Vec3(8, .18, 116), mats.lava);
   for (let i = 0; i < 28; i++) {
     const side = i % 2 ? -1 : 1;
     makePrimitive('Cave rock', 'sphere', world,
@@ -431,7 +433,7 @@ function buildForest() {
   sceneName = 'forest';
   camera.camera!.clearColor = new pc.Color(.36, .61, .76);
   app.scene.ambientLight = new pc.Color(.28, .34, .24);
-  makePrimitive('Forest floor', 'box', world, new pc.Vec3(0, -.6, 0), new pc.Vec3(58, .6, 58), mats.grass);
+  makePrimitive('Forest floor', 'box', world, new pc.Vec3(0, -.6, 0), new pc.Vec3(116, .6, 116), mats.grass);
   for (let i = 0; i < 75; i++) {
     const x = (Math.random() - .5) * 105;
     const z = (Math.random() - .5) * 105;
@@ -477,7 +479,9 @@ async function buildExtractedForestSector() {
       'box',
       world,
       new pc.Vec3(0, -.5, 0),
-      new pc.Vec3(groundSize / 2, .5, groundSize / 2),
+      // Full extent, not half: browser_ground_size_m is the span, and the box
+      // primitive is a unit cube.
+      new pc.Vec3(groundSize, .5, groundSize),
       mats.grass
     );
 
