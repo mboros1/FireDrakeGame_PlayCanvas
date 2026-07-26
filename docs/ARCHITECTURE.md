@@ -314,8 +314,51 @@ is the worst possible time to discover it. Crossing the boundary requires one of
 This is an ABI constraint, not an implementation detail, and it is invisible
 until it is not.
 
-Storage shape follows the same rule: `SoaStore`, `Slab`, and `World` are shipped,
-so `WorldState` mirrors that layout rather than inventing one.
+### Storage: fix the interface, not the layout
+
+`WorldState` is an **opaque store addressed by handle**. It does *not* mirror
+forge's `SoaStore`/`Slab` layout in TypeScript.
+
+An earlier draft said it should. That was wrong, and inconsistent with the
+opacity rule directly above it: if the view may not decompose an `EntityId`, it
+equally may not depend on the storage layout behind one. Two further reasons:
+
+- **The TypeScript simulation is scaffolding.** Phase 3 replaces `sim/` with
+  forge compiled to wasm32. Shaping its internals to match Rust optimizes code
+  scheduled for deletion.
+- **SoA does not pay in JavaScript.** Its benefit is cache locality and SIMD in
+  native code; under the JS JIT you would write awkward parallel-array code for
+  a performance model that does not apply.
+- **A hand-mirrored layout would drift** from forge's real one, and the drift
+  would stay invisible until phase 3 tried to swap them.
+
+What must stay stable is the *boundary*. Two access patterns, because they have
+different cost profiles:
+
+**Bulk, hot, every frame** — a dense buffer the renderer walks linearly. Never
+per-entity calls; that is the crossing cost the ABI section exists to avoid.
+
+```ts
+entityCount(): number;
+transforms(): Float32Array;    // [x,y,z,qx,qy,qz,qw] × n, render-slot indexed
+idsAt(slot: number): EntityId; // correlate slot → id for the pc.Entity pool
+```
+
+**Random access, cold** — by handle, per call. Debug API, picking, targeting.
+
+```ts
+kind(id: EntityId): EntityKind;
+flags(id: EntityId): number;
+transform(id: EntityId, out: Transform): boolean;
+```
+
+The dense buffer *is* SoA, but only at the boundary — that is the shape wasm32
+will hand back. Behind the interface the TypeScript implementation uses whatever
+reads clearly. Phase 3 swaps it for a view over WASM linear memory and the
+renderer does not change.
+
+`idsAt` is where the `u64` constraint lands in practice: it becomes two `u32`
+lanes once the ids genuinely originate in Rust.
 
 `src/tuning.ts` stays on the JS side and stays live-tunable. A Rust rebuild is
 seconds where Vite HMR is sub-second, and the fast feel-iteration loop is the
