@@ -258,6 +258,42 @@ sequence), not world state. That schema is far smaller and far more stable than
 the simulation's, so replays are naturally more durable than snapshot-based
 recording would be.
 
+### Compression: by channel, not by size
+
+| Channel | Compression |
+|---|---|
+| Per-tick state deltas (datagrams) | **none** |
+| Initial state sync, level load, bulk (reliable stream) | **zstd** |
+| Stored artifacts (levels, replays, assets) | **zstd(CBOR)** — void's existing pipeline |
+
+void already standardizes on zstd(CBOR) → AES-GCM at level 3
+(`core/src/index/io.rs`, `core/src/shard/mod.rs`), so stored artifacts inherit
+that pipeline unchanged rather than introducing a second one.
+
+**The hot path is deliberately uncompressed.** On a datagram channel the unit
+that matters is packets, not bytes: datagrams are MTU-bound at roughly 1200
+bytes, so halving a snapshot that already fits in one packet changes no latency
+and no loss behaviour. The decision rule is "does this reduce packet count," and
+for a room-sized entity count it does not.
+
+The data also resists compression by construction. What actually shrinks game
+state is semantic — quantizing positions to render precision, delta-encoding
+against the last acknowledged snapshot, and interest management dropping
+entities the client cannot see. Generic LZ can do none of those, and after they
+are applied the remainder is high-entropy. Short or integer CBOR keys remove the
+repeated field names, which was the only real redundancy worth squeezing.
+
+This also avoids two hazards. A trained zstd dictionary would be an artifact to
+generate, version, ship, cache, and keep synchronized across client and server,
+with decompression failure as the drift mode. And **streaming zstd context is
+incompatible with unreliable datagrams** — a single dropped datagram desyncs the
+decompressor unrecoverably, so shared compression history is only available on a
+reliable ordered stream, which forfeits the reason for choosing datagrams. With
+no hot-path compression, neither problem exists.
+
+If a size threshold is ever introduced within one channel, signal it with a
+header bit. Never infer compression from content.
+
 Prediction scope: predict the local drake, interpolate everything else. Nobody
 notices 100 ms of latency on a dwarf they aren't controlling.
 
