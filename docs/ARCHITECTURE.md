@@ -104,6 +104,59 @@ This is the same authority-split-by-stakes principle Warframe uses — Digital
 Extremes' servers own matchmaking and the account economy; the distributed part
 owns the session.
 
+### Repository layout
+
+The game's Rust lives in **this** repository as `crates/firedrake-sim`,
+depending on forge through a path dependency.
+
+This keeps forge general-purpose rather than accreting Fire Drake specifics,
+keeps game churn out of forge's 253-test suite, and lets the game iterate
+without touching the engine. Engine changes the game needs get made in forge
+deliberately, as engine work, rather than leaking in as game commits.
+
+### World convention
+
+**Y-up, right-handed, 1 unit = 1 metre.** The drake is roughly 6 m nose to tail.
+
+This matches glTF and PlayCanvas natively, so Blender's glTF exporter performs
+the Z-up conversion and nothing hand-rolls a basis change. Mismatched transform
+conversion is exactly what broke the Unreal extraction, and that mistake is not
+worth repeating in a new pipeline.
+
+The current prototype violates this — roughly a 30 m wingspan, `modelScale:
+0.01`, and a 9.65 m recentring offset in `src/tuning.ts`. Reconciling it is part
+of phase 1, and it must happen before any level is authored, because every asset
+and transform authored against the wrong convention has to be redone.
+
+Numeric budget: forge's Q16.16 `Fx` gives roughly ±26 km safe per-axis range at
+about 0.015 mm precision. Comfortable for a sector-scale world; a hard ceiling
+if the design ever wants continents, which would need origin rebasing.
+
+### Tick rate: 30 Hz
+
+Simulation runs at a fixed 30 Hz; rendering interpolates between ticks at
+display rate. Halves snapshot bandwidth against 60 Hz, and forge's semi-implicit
+Euler integrator is stable there. Revisit only if the game feel demands it —
+this is a tuning-visible parameter, so it should be settled before physics
+tuning rather than during.
+
+### The drake is a kinematic character controller
+
+Axis-locked capsule with scripted movement, slide, and step-up. Not a dynamic
+rigid body driven by forces.
+
+This keeps the player predictable and responsive, and it is what lets
+`10_CONTACTS_AND_COLLIDERS.md` defer `QuatFx`, angular velocity, inertia
+tensors, and torque entirely.
+
+**The tension is acknowledged rather than resolved.** The slapstick identity of
+a Goat Simulator–like comes largely from dynamic ragdoll physics — flailing
+bodies, tumbling props, momentum going wrong in funny ways. That is precisely
+the deferred second physics pass. So the deferral is on the critical path to the
+game being *good*, even though it is not on the path to the game being
+*playable*. Sequencing a controllable drake ahead of a funny one is deliberate,
+not an assessment that ragdolls are optional.
+
 ## The shape
 
 ```
@@ -387,15 +440,81 @@ surface the protocol ambiguities behind the current laptop-to-laptop flakiness.
 That is void infrastructure work with independent value, and should be justified
 on those terms rather than on game bandwidth.
 
+## Levels
+
+The level format lives in Rust, because the server needs collision geometry,
+spawn points, and triggers, and the server is a native binary with no browser
+and no PlayCanvas.
+
+**Split in two halves**, on the same seam as everything else:
+
+- **Simulation half** — collision primitives, spawns, triggers, physics
+  materials, region bounds. Loaded by server *and* client. Small: a few thousand
+  `{ shape, transform, tags }` entries. Keeps server level-load to milliseconds
+  and lets the sim start before art finishes streaming.
+- **Presentation half** — meshes, materials, lights, particles, LODs,
+  referenced by CID. Client only. **The server never parses a mesh**; it needs a
+  capsule at a position, not a tree model.
+
+A level is *not* a scene tree. `07_RENDERING_AND_SCENES.md` names
+scene-graph-as-data-model an explicit non-goal — entities live in slab storage
+and scenes organize only how they get drawn.
+
+### Authoring
+
+```
+.blend  →  .glb  →  forge CLI compile  →  level artifact (CID)
+(source)   (interchange)                  ├─ sim half   → server + client
+                                          └─ presentation → client only
+```
+
+Blender owns geometry, terrain, and art placement. This follows
+`06_OBSERVABILITY_AND_INTERFACE.md`, which rules out building an editor as a
+deliberate strategic choice — "editor maturity is the gap that killed many indie
+engines." It also happens to suit agent workflows far better than Unreal did:
+`blender -b level.blend -P export.py` is headless, scripted, deterministic, and
+needs no running editor, no plugin bridge, and no open port.
+
+Conventions carry gameplay data: empties named `spawn_drake` / `trigger_*` with
+Blender custom properties exported into glTF `extras`, and collision proxies
+named `COL_capsule_*` / `COL_sphere_*` alongside the art mesh. That lines up
+with doc 10 — trees are vertical capsules, rocks are spheres, so a stylized
+forest needs no mesh colliders at all.
+
+**Source format is RON**, chosen over TOML because collider and entity types are
+Rust enums and RON round-trips variants and tuples natively where TOML needs a
+hand-rolled discriminator string and cannot express a fixed-arity vector.
+Compiled artifacts are CBOR per the serialization section.
+
+### Gameplay editing
+
+The RON file is canonical. Agents edit it directly — precise, diffable,
+reviewable in a commit, with no GUI state to desync from disk, and verified
+through the existing Playwright MCP loop and `__FIRE_DRAKE_DEBUG__`.
+
+A browser-side placement tool may be added for humans, but under one hard
+constraint: **it writes back to that same file and holds no project state of its
+own.** No database, no editor-internal scene. One representation, two
+interfaces, no sync layer. Scope is placement and live tuning only — the moment
+it grows a mesh or material editor, it has become the thing doc 06 decided not
+to build.
+
+Off-the-shelf browser editors were considered and rejected on a common
+disqualifier: each makes its own scene graph the source of truth, requiring a
+lossy converter into forge's model — structurally the same mistake as the Unreal
+extraction pipeline.
+
 ## Phasing
 
 Playable at every step.
 
 1. **Renderer/state seam.** Split `src/main.ts` into a `WorldState` producer and
    a PlayCanvas consumer. No Rust yet. This defines the ABI. Both Playwright
-   tests stay green.
-2. **forge physics to a playable floor.** `Fx::sqrt`, segment-segment closest
-   point, capsule colliders, contact manifolds, terrain. Tracked in forge doc 10.
+   tests stay green. Also reconcile world scale to the metre convention above,
+   before any level is authored against the wrong one.
+2. **forge physics to a playable floor.** `Fx::sqrt`, contact manifolds, impulse
+   resolution, segment-segment closest point, capsule colliders, terrain.
+   Tracked in forge doc 10.
 3. **forge to wasm32.** `WorkerPool` platform seam, then swap TS movement for
    forge calls. Still single-player. The existing test suite is the gate.
 4. **Server.** Same crate, native, authoritative, one room, WebTransport,
@@ -404,6 +523,19 @@ Playable at every step.
 
 Step 2 is the long pole and the accepted cost of choosing forge.
 
+### Exit condition for phase 2
+
+Engine work attached to a game expands indefinitely without one. Phase 2 is done
+when:
+
+> The drake walks over uneven terrain under forge's simulation, collides with
+> trees and cannot pass through them, falls and lands correctly, is driven by
+> the kinematic controller, runs single-player, and both existing Playwright
+> tests are green.
+
+Not: ragdolls, flight, props, multiplayer, or materials. Those are later phases
+and pulling them into phase 2 is how it stops terminating.
+
 ## Open questions
 
 - **Room size and topology.** Assumed 8–16 players per room, rooms sharded
@@ -411,11 +543,17 @@ Step 2 is the long pole and the accepted cost of choosing forge.
   large persistent world would change slab partitioning and interest management
   substantially.
 - **Rotational dynamics timing.** `02_PHYSICS.md` specifies `QuatFx` and full
-  inertia tensors. Axis-locked capsules are enough for characters and defer all
-  of it. When ragdolls arrive, this reopens.
+  inertia tensors. The kinematic controller defers all of it. This reopens with
+  ragdolls, and per the controller decision above, that is sooner than "when
+  convenient" — it gates the game being funny.
 - **Terrain representation.** Heightfield versus authored collision geometry,
   and whether the drake's flight needs a different broadphase than ground
-  movement.
+  movement. Blocks phase 2; needs its own scoping pass, likely forge doc 12.
+- **Character controller mechanics.** The decision is *kinematic*; the mechanics
+  are unspecified. Step height, slope limit, ground snapping, air control,
+  and how flight transitions in and out. Not designed anywhere yet.
+- **Snapshot structure and interest-management criteria.** Deferred until a
+  working single-player sim exists to measure against.
 - **Whether the gateway is the only origin** or one of several behind the
   swappable config value.
 
