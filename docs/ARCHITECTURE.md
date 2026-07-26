@@ -195,8 +195,68 @@ state tagged with the last input sequence consumed. The client compares against
 its own prediction for that sequence, and on mismatch discards its version,
 snaps to the server's, and replays newer inputs.
 
-The wire format is decoded in Rust on both ends via `postcard`. JS never parses
-it.
+### Serialization: CBOR
+
+**CBOR everywhere, encoded and decoded in Rust on both ends. JS never parses the
+wire format.**
+
+An earlier draft of this doc specified `postcard` for the hot path on size
+grounds — it is non-self-describing, so a snapshot costs roughly a third of the
+equivalent CBOR with string keys. That was the wrong trade and is recorded here
+so it doesn't get re-proposed.
+
+The argument for it was that schema drift is impossible because client and
+server are one crate compiled twice. That holds only for the live client/server
+pair inside a single build. It protects nothing that is *stored*:
+
+- **Replays.** "Initial-state CID plus an input log" is a headline benefit of
+  determinism. Under a schema-rigid format, every added field invalidates the
+  entire recorded archive.
+- **World snapshots and level files**, for the same reason.
+- **Rolling deploys and stale browser tabs**, where two builds are briefly live.
+
+Schema-rigid formats are worst precisely during early development, when state
+layout changes weekly — which is the phase this project is in. This is a lesson
+already paid for on another project with `rkyv`; the same failure mode should not
+be bought twice.
+
+CBOR also earns its place on grounds beyond evolvability:
+
+- **void already speaks it.** `ciborium` is a daemon dependency, published
+  bundles are `content.cbor`. Levels, snapshots, and replays are
+  content-addressed artifacts headed into that pipeline; a second encoder for
+  data landing in the same store is pure cost.
+- **Deterministic encoding profile.** The same logical data must produce
+  identical bytes or content addressing churns CIDs on semantically unchanged
+  content. CBOR specifies this; `postcard` does not.
+- **Self-describing.** A captured packet can be dumped without the schema, which
+  matters more than it sounds like at 3am.
+
+Closing the size gap without giving up any of that: use short or integer keys on
+hot-path structs. Most of CBOR's overhead is repeated string field names, and
+that is a `#[serde(rename)]` away.
+
+**When the hot path eventually needs to be smaller, the answer is not another
+serde format.** It is a purpose-built encoder — quantized positions,
+delta-encoded against the last acknowledged snapshot, bitpacked — which beats
+both CBOR and postcard by a margin that makes their difference rounding error.
+That encoder carries an explicit version byte because it is hand-written, so it
+does not reintroduce the rigidity problem. It is also work to defer until
+profiling demands it.
+
+Evolvability discipline, since self-description alone is not a versioning
+strategy:
+
+- An explicit `version` field on every persisted artifact.
+- `#[serde(default)]` on added fields so old data still loads.
+- Never reuse or renumber a key.
+- Content-addressed artifacts are immutable, so old CIDs stay readable as long
+  as the matching decoder is kept; the version field says which one.
+
+One structural help: replays serialize *inputs* (button bits, yaw, pitch,
+sequence), not world state. That schema is far smaller and far more stable than
+the simulation's, so replays are naturally more durable than snapshot-based
+recording would be.
 
 Prediction scope: predict the local drake, interpolate everything else. Nobody
 notices 100 ms of latency on a dwarf they aren't controlling.
