@@ -116,7 +116,37 @@ deliberately, as engine work, rather than leaking in as game commits.
 
 ### World convention
 
-**Y-up, right-handed, 1 unit = 1 metre.** The drake is roughly 6 m nose to tail.
+**Y-up, right-handed, 1 unit = 1 metre.**
+
+Units alone do not make a world coherent — they tell you the drake is 43 m, not
+that 43 m is wrong. So the scale bible below fixes reference dimensions, and
+everything else is authored against them.
+
+**Anchor on standing height**, because that is what becomes the collision
+capsule the simulation consumes. Wingspan is an art and flight number — wings
+fold when walking, so the ground capsule is body-width, not wingspan. Nose-to-
+tail is a sanity check and enters nothing.
+
+| Object | Dimension | Note |
+|---|---|---|
+| **Dwarf** | **1.3 m** tall | the anchor; the human-scale referent |
+| **Drake** | **2.2 m** standing | ~1.7× a dwarf. 6.0 m nose-to-tail, 9.5 m wingspan |
+| Stylized tree | 8–12 m | canopy the drake flies through or over |
+| Cave ceiling | 12 m | fits with flight headroom, still reads enclosed |
+| Play sector | 300–400 m | ~20–25 s corner to corner at charge speed |
+
+The drake-to-dwarf ratio is the decision that matters. At ~1.7× height you are a
+large predator among people — you can knock a dwarf over, chase a cluster, and
+individuals still read as individuals. At the original ~7.7× they are ants, and
+nothing done to one of them is legible. Goat Simulator keeps its goat roughly
+human-sized for the same reason: the comedy needs the player and the props in
+one size league.
+
+`wyvern.glb` measures 4329.53 × 1005.49 × 2732.68 raw units with feet at
+−964.31 and Z centre −707.60. `src/tuning.ts` records these and *derives*
+`modelScale` and both offsets from a target height, so changing the height
+cannot leave the drake floating or sunk. `tests/gameplay.spec.ts` asserts the
+`offset.y / scale` ratio to enforce exactly that.
 
 This matches glTF and PlayCanvas natively, so Blender's glTF exporter performs
 the Z-up conversion and nothing hand-rolls a basis change. Mismatched transform
