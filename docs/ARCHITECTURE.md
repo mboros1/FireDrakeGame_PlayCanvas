@@ -157,6 +157,14 @@ game being *good*, even though it is not on the path to the game being
 *playable*. Sequencing a controllable drake ahead of a funny one is deliberate,
 not an assessment that ragdolls are optional.
 
+Controller state is a plain enum (`Grounded | Airborne | Flying | Stunned`),
+replicated and consumed by the client's animation graph. One implementation
+note: **data-carrying enum variants sit awkwardly in slab-major SoA**, since a
+column must be sized for the largest variant. Prefer a bare discriminant column
+with payloads in their own columns (`fall_velocity`, `stunned_until`), accepting
+that some rows leave them unused. Worth choosing deliberately rather than
+discovering it when the column layout looks strange.
+
 ## The shape
 
 ```
@@ -239,6 +247,80 @@ Two gotchas to hold onto:
 seconds where Vite HMR is sub-second, and the fast feel-iteration loop is the
 main advantage this prototype has over the Unreal build. Only structural
 simulation changes should pay the compile.
+
+### Animation
+
+**Animation is presentation and lives entirely on the client.** The simulation
+replicates a movement state and a few scalars; the client derives every pose
+from them as a pure projection.
+
+Replicated:
+
+```rust
+enum MoveState { Grounded, Airborne, Flying, Stunned }
+// plus: horizontal speed, grounded flag, burning flag
+```
+
+Not replicated: which clip is playing, blend weights, or animation time. The
+client computes all of it.
+
+This holds because nothing here feeds gameplay outcomes — the server owns hit
+detection through an explicit cone test, not animation-driven hitboxes. Keeping
+animation client-side means no animation state on the wire, and no pointless
+determinism constraint on a presentation concern.
+
+**The rule that keeps this true: no root motion.** Root motion is precisely the
+mechanism that couples animation into simulation — once movement comes out of a
+clip, the server needs the animation system and determinism follows it in.
+Movement stays code-driven, which the kinematic controller implies anyway.
+
+#### Use PlayCanvas's anim state graph
+
+Verified against the installed 2.21.0 `playcanvas.d.ts`:
+
+- `AnimStateGraph` takes a **plain JS object**, so the graph lives in this repo
+  as a TypeScript literal — versioned, diffable, agent-editable, and requiring
+  no PlayCanvas Editor. That matters given the Editor was deliberately rejected
+  as an authoring path.
+- `setFloat` / `setBoolean` / `setTrigger` drive transitions by named parameter.
+  The parameters simply *are* the replicated state, so the client-side mapping
+  is a handful of lines per frame rather than an animation system.
+- `assignAnimation(nodePath, animTrack, layerName?, …)` binds tracks to states,
+  and creates a single-state default graph if none is loaded — so one clip can
+  be wired and seen moving before any graph is designed.
+
+#### Compose with layers, not with more states
+
+`ANIM_LAYER_ADDITIVE` and per-layer `mask` are first-class
+(`addLayer({ name, states, transitions, weight, mask, blendType })`).
+
+Use them. A flat state machine cannot express "running **and** on fire **and**
+flailing" without `RunFlail` / `WalkFlail` / `IdleFlail` and onward into
+combinatorial explosion. Base layer drives locomotion from speed; an additive
+masked layer drives upper-body flail from the burning flag.
+
+This is the failure already recorded in the Unreal handoff — *"only the arm/flail
+layer was observed at one point instead of a clean run-plus-flail blend"* — and
+it was not a bug in the state machine so much as the state machine being the
+wrong tool for a combination. PlayCanvas has the layering natively rather than
+through slots and additive montages.
+
+#### Current mapping
+
+The exported drake clips — `idle`, `walk`, `take_off`, `flying`, `flapping` —
+form a plain ground↔air FSM needing no layering:
+
+```
+Idle ⇄ Walk                        (blend on speed)
+Idle/Walk → TakeOff → Flying ⇄ Flapping
+```
+
+Layering is the *dwarf's* problem, and the dwarves are still primitives with no
+model imported, so it arrives later with the solution already known.
+
+Connecting this is self-contained — no Rust, no server, no physics — and takes
+the drake out of bind pose, which is the single largest visible improvement
+available at present.
 
 ## Networking
 
