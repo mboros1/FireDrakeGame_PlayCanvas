@@ -273,6 +273,50 @@ Two gotchas to hold onto:
 - The same buffer can feed PlayCanvas GPU instancing directly, which is also the
   answer to rendering dense foliage.
 
+### Entity identity
+
+**Do not invent an identity scheme.** forge has shipped one, and the renderer
+must mirror it rather than run a parallel scheme that has to be reconciled.
+
+forge has two tiers:
+
+- **`Handle<T>`** (`forge-storage/src/handle.rs`) — L1 fast path.
+  `{ slot: u32, generation: u32 }`, 8 bytes, generation-checked against
+  use-after-free. Slab-local and type-bound.
+- **`EntityId`** (`forge-storage/src/entity.rs`) — L2/L3. Opaque `NonZeroU64`
+  backed by `EntityMap` in `World`, resolving to `(SlabId, TypeId, Handle<T>)`.
+
+**The renderer keys on `EntityId`.** `Handle<T>`'s own documentation says it
+*"does not survive cross-slab transitions (the slot index is local to one
+pool)"*, and `03_TIERED_HYDRATION.md` makes slab transitions routine rather than
+exceptional. A view pooling `pc.Entity` objects against `Handle<T>` would lose
+its mapping whenever an entity crossed a region boundary, surfacing as geometry
+that flickers or teleports. `EntityId` is specifically the identity that
+*"survives transfers between slabs and representation changes."*
+
+**Treat it as opaque.** `entity.rs` states there is deliberately no public
+accessor on the inner bits, *"to discourage byte-level dependence so we can
+change the underlying allocation scheme later without breaking callers."* The
+TypeScript side therefore uses a branded opaque type and never decomposes it —
+mirroring the slot/generation packing would recreate exactly the coupling that
+design note exists to prevent.
+
+**JavaScript cannot hold a `u64`.** JS numbers are `f64` with 53 bits of integer
+precision, so an `EntityId` does not round-trip through a `number` — the high
+bits are silently dropped, and collisions appear only once IDs grow large, which
+is the worst possible time to discover it. Crossing the boundary requires one of:
+
+- two `u32` lanes (hi/lo) in a parallel `ids` buffer,
+- `BigInt` (correct, but poor as a hot-path `Map` key), or
+- a dense render-slot index alongside the real id, with the view keyed on the
+  slot and the id used only for correlation.
+
+This is an ABI constraint, not an implementation detail, and it is invisible
+until it is not.
+
+Storage shape follows the same rule: `SoaStore`, `Slab`, and `World` are shipped,
+so `WorldState` mirrors that layout rather than inventing one.
+
 `src/tuning.ts` stays on the JS side and stays live-tunable. A Rust rebuild is
 seconds where Vite HMR is sub-second, and the fast feel-iteration loop is the
 main advantage this prototype has over the Unreal build. Only structural
