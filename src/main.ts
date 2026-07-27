@@ -1,6 +1,9 @@
 import * as pc from 'playcanvas';
 import './style.css';
 import { TUNING } from './tuning';
+import { World } from './sim/world';
+import { DrakeSim } from './sim/drake';
+import type { Input, Transform } from './sim/types';
 
 type SceneName = 'cave' | 'forest' | 'forestExtract';
 type SavedState = { scene: SceneName; x: number; z: number; yaw: number };
@@ -91,6 +94,39 @@ const mats = {
 const world = new pc.Entity('World');
 app.root.addChild(world);
 
+/**
+ * Simulation state. Being migrated out of this file — see
+ * `docs/ARCHITECTURE.md` phase 1. Everything under `src/sim/` is free of
+ * PlayCanvas and is what phase 3 replaces with forge on wasm32.
+ */
+const simWorld = new World();
+
+/** Reused per frame so the input path allocates nothing. */
+const frameInput: Input = {
+  forward: 0,
+  right: 0,
+  charging: false,
+  breathing: false,
+  cameraYaw: 0
+};
+
+/** Reused for cold single-entity transform reads. */
+const scratch: Transform = { x: 0, y: 0, z: 0, yaw: 0 };
+
+/** View → sim: raw key state becomes the tick's declared intent. */
+const readInput = (): Input => {
+  frameInput.forward =
+    (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) -
+    (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0);
+  frameInput.right =
+    (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) -
+    (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
+  frameInput.charging = keys.has('ShiftLeft') || keys.has('ShiftRight');
+  frameInput.breathing = keys.has('Space');
+  frameInput.cameraYaw = cameraYaw;
+  return frameInput;
+};
+
 const makePrimitive = (
   name: string,
   type: 'box' | 'sphere' | 'cylinder' | 'cone' | 'capsule',
@@ -139,61 +175,78 @@ const loadAsset = (url: string, type: string) =>
     });
   });
 
+/**
+ * View-side drake: owns the model, materials and presentation. Gameplay state
+ * lives in `DrakeSim`; this class reads it and draws it.
+ */
 class Drake {
   readonly root = new pc.Entity('Drake');
+  readonly sim: DrakeSim;
   modelReady = false;
   private headNode: pc.GraphNode | null = null;
   private tailNode: pc.GraphNode | null = null;
   private readonly visual = new pc.Entity('Fire Drake Visual');
   private readonly placeholder = new pc.Entity('Loading Drake');
-  private currentSpeed = 0;
-  yaw = previous?.yaw ?? 0;
-  fireCooldown = 0;
 
   constructor() {
+    this.sim = new DrakeSim(simWorld, previous?.x ?? 0, previous?.z ?? 13, previous?.yaw ?? 0);
     this.root.addChild(this.visual);
     this.visual.addChild(this.placeholder);
     makePrimitive('Body', 'capsule', this.placeholder, new pc.Vec3(0, 1.35, 0), new pc.Vec3(1.5, .65, .75), mats.drake, new pc.Vec3(0, 0, 90));
     makePrimitive('Head', 'box', this.placeholder, new pc.Vec3(0, 2, -2), new pc.Vec3(.72, .48, 1.05), mats.drake);
     world.addChild(this.root);
-    this.root.setPosition(previous?.x ?? 0, .1, previous?.z ?? 13);
+    this.syncFromSim();
     void this.loadRealModel();
   }
 
+  get yaw() {
+    simWorld.state.transform(this.sim.id, scratch);
+    return scratch.yaw;
+  }
+
+  set yaw(value: number) {
+    // Read before placing: `position` returns the shared scratch transform,
+    // which `place` overwrites.
+    simWorld.state.transform(this.sim.id, scratch);
+    this.place(scratch.x, scratch.z, value);
+  }
+
+  get position() {
+    simWorld.state.transform(this.sim.id, scratch);
+    return scratch;
+  }
+
+  place(x: number, z: number, yaw?: number) {
+    this.sim.place(simWorld, x, z, yaw);
+    this.syncFromSim();
+  }
+
   update(dt: number, elapsed: number) {
-    const forwardInput = (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0);
-    const rightInput = (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
-    const cameraRadians = cameraYaw * pc.math.DEG_TO_RAD;
-    const cameraForward = new pc.Vec3(-Math.sin(cameraRadians), 0, -Math.cos(cameraRadians));
-    const cameraRight = new pc.Vec3(Math.cos(cameraRadians), 0, -Math.sin(cameraRadians));
-    const desiredDirection = cameraForward.mulScalar(forwardInput).add(cameraRight.mulScalar(rightInput));
-    const inputAmount = Math.min(1, desiredDirection.length());
-    if (inputAmount > .01) {
-      desiredDirection.normalize();
-      const desiredYaw = Math.atan2(-desiredDirection.x, -desiredDirection.z) * pc.math.RAD_TO_DEG;
-      let yawDelta = (desiredYaw - this.yaw + 540) % 360 - 180;
-      this.yaw += yawDelta * Math.min(1, dt * TUNING.drake.turnResponsiveness);
-    }
-    this.root.setEulerAngles(0, this.yaw, 0);
-    const targetSpeed = (keys.has('ShiftLeft') || keys.has('ShiftRight')
-      ? TUNING.drake.chargeSpeed
-      : TUNING.drake.walkSpeed) * inputAmount;
-    this.currentSpeed = pc.math.lerp(this.currentSpeed, targetSpeed, Math.min(1, dt * TUNING.drake.acceleration));
-    const radians = this.yaw * pc.math.DEG_TO_RAD;
-    const forward = new pc.Vec3(-Math.sin(radians), 0, -Math.cos(radians));
-    this.root.translate(forward.x * this.currentSpeed * dt, 0, forward.z * this.currentSpeed * dt);
-    this.root.setPosition(
-      pc.math.clamp(this.root.getPosition().x, -54, 54),
-      .1,
-      pc.math.clamp(this.root.getPosition().z, -54, 54)
+    this.sim.update(simWorld, dt, readInput());
+    this.syncFromSim();
+
+    // Presentation only: a run bob derived from simulated speed.
+    this.visual.setLocalPosition(
+      0,
+      Math.abs(Math.sin(elapsed * 7)) * Math.min(.12, Math.abs(this.sim.speed) * .012),
+      0
     );
-    this.visual.setLocalPosition(0, Math.abs(Math.sin(elapsed * 7)) * Math.min(.12, Math.abs(this.currentSpeed) * .012), 0);
-    this.fireCooldown -= dt;
-    if (keys.has('Space') && this.fireCooldown <= 0) {
-      this.fireCooldown = .055;
-      emitBreath(this.root.getPosition().clone().add(new pc.Vec3(0, 2, 0)).add(forward.clone().mulScalar(2.8)), forward);
+
+    if (this.sim.breathed) {
+      const origin = this.root.getPosition().clone()
+        .add(new pc.Vec3(0, 2, 0))
+        .add(new pc.Vec3(this.sim.forwardX, 0, this.sim.forwardZ).mulScalar(2.8));
+      const forward = new pc.Vec3(this.sim.forwardX, 0, this.sim.forwardZ);
+      emitBreath(origin, forward);
       if (sceneName === 'forest') hitDwarves(this.root.getPosition(), forward);
     }
+  }
+
+  /** Copy the simulated transform onto the rendered entity. */
+  private syncFromSim() {
+    simWorld.state.transform(this.sim.id, scratch);
+    this.root.setPosition(scratch.x, scratch.y, scratch.z);
+    this.root.setEulerAngles(0, scratch.yaw, 0);
   }
 
   getVisualForwardAlignment() {
@@ -425,7 +478,7 @@ function buildCave() {
   makePrimitive('Portal right', 'box', world, new pc.Vec3(5, 4, -43), new pc.Vec3(2, 6, 2), mats.rock);
   makePrimitive('Portal top', 'box', world, new pc.Vec3(0, 9, -43), new pc.Vec3(7, 2, 2), mats.rock);
   objective.textContent = 'Rampage toward the forest gate';
-  drake.root.setPosition(0, .1, 13);
+  drake.place(0, 13);
 }
 
 function buildForest() {
@@ -445,8 +498,7 @@ function buildForest() {
     makePrimitive('Crown', 'cone', tree, new pc.Vec3(0, 6.3, 0), new pc.Vec3(2.4, 4.2, 2.4), i % 2 ? mats.leaf : mats.leaf2);
   }
   objective.textContent = 'Cause some medieval mayhem';
-  drake.root.setPosition(0, .1, 38);
-  drake.yaw = 0;
+  drake.place(0, 38, 0);
   for (let i = 0; i < 6; i++) spawnDwarf();
 }
 
@@ -520,8 +572,7 @@ async function buildExtractedForestSector() {
       extractedObjects++;
     }
 
-    drake.root.setPosition(0, .1, 0);
-    drake.yaw = 0;
+    drake.place(0, 0, 0);
     objective.textContent = 'Explore the extracted Unreal forest sector';
   } catch (error) {
     extractedLoadError = error instanceof Error ? error.message : String(error);
@@ -594,7 +645,7 @@ window.__FIRE_DRAKE_DEBUG__ = {
       }
     };
   },
-  teleport: (x: number, z: number) => drake.root.setPosition(x, .1, z),
+  teleport: (x: number, z: number) => drake.place(x, z),
   loadScene: (name: SceneName) => {
     if (name === 'forestExtract') void buildExtractedForestSector();
     else if (name === 'forest') buildForest();
