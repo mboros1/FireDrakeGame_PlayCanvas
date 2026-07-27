@@ -1,0 +1,14 @@
+{
+  // Type-checks the test suite and build scripts, which the root config does
+  // not cover (it includes only `src`). Deliberately does not include
+  // `src/main.ts`: it declares the `__FIRE_DRAKE_DEBUG__` global with a looser
+  // shape than the test suite's own declaration, and pulling both into one
+  // program collides. Modules the tests import are picked up transitively.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "vite/client"],
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": ["../tests", "../scripts"]
+}

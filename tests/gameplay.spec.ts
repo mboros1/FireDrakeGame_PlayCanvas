@@ -1,13 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { TUNING } from '../src/tuning';
-
-/**
- * Distance from the wyvern model's origin down to its feet, in raw GLB units,
- * measured from `public/assets/wyvern/wyvern.glb`. The runtime offset must stay
- * equal to this times the model scale, or the drake floats or sinks. Asserting
- * the ratio catches a scale change that forgot to bring the offsets with it.
- */
-const MODEL_FOOT_DROP = 964.31;
+import { WYVERN_MODEL } from '../src/generated/wyvern-model';
 
 type DebugState = {
   scene: 'cave' | 'forest' | 'forestExtract';
@@ -54,7 +47,7 @@ test('third-person Fire Drake control loop', async ({ page }) => {
   expect(loaded.model.scale).toBeCloseTo(TUNING.drake.modelScale);
   expect(loaded.model.offset.y).toBeCloseTo(TUNING.drake.modelOffset.y);
   // Feet sit on the ground: the offset tracks the scale, whatever the scale is.
-  expect(loaded.model.offset.y / loaded.model.scale).toBeCloseTo(MODEL_FOOT_DROP, 0);
+  expect(loaded.model.offset.y / loaded.model.scale).toBeCloseTo(WYVERN_MODEL.footDrop, 0);
   expect(loaded.model.forwardAlignment).not.toBeNull();
   expect(loaded.model.forwardAlignment!).toBeGreaterThan(.65);
   await page.screenshot({ path: 'test-results/visual/01-loaded.png' });

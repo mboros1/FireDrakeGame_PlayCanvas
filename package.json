@@ -5,21 +5,21 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test:browser": "playwright test",
     "test:browser:headed": "playwright test --headed",
     "sanitize:forest": "node scripts/sanitize-gltf.mjs public/assets/forest-sector",
+    "extract:model": "node scripts/extract-model-data.mjs",
     "iterate": "npm run build && npm run test:browser"
   },
   "dependencies": {
     "playcanvas": "2.21.0"
   },
   "devDependencies": {
-    "@playwright/mcp": "^0.0.78",
-    "@playwright/test": "^1.61.1",
     "@playwright/mcp": "0.0.78",
     "@playwright/test": "1.61.1",
+    "@types/node": "^26.1.1",
     "typescript": "7.0.2",
     "vite": "8.1.5"
   }
