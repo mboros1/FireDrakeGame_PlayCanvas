@@ -14,6 +14,24 @@ import { WYVERN_MODEL } from './generated/wyvern-model';
 export const DRAKE_HEIGHT_M = 2.2;
 
 /**
+ * The scale anchor. Everything else in the world is judged against a dwarf,
+ * because it is the human-scale referent — see the scale bible in
+ * `docs/ARCHITECTURE.md`.
+ */
+export const DWARF_HEIGHT_M = 1.3;
+
+/**
+ * Height the dwarf's placeholder primitives are authored at: the head sphere
+ * sits at y=2.05 with a 0.35 radius, so the silhouette tops out at 2.4. The
+ * primitives keep their authored proportions and the root is scaled by
+ * {@link DWARF_SCALE}, so retargeting the height is one number rather than
+ * twenty.
+ */
+const DWARF_PRIMITIVE_HEIGHT = 2.4;
+
+export const DWARF_SCALE = DWARF_HEIGHT_M / DWARF_PRIMITIVE_HEIGHT;
+
+/**
  * Derived from the measured model, never hand-entered. ~0.00219, giving a
  * 2.2 m tall drake at 6.0 m nose-to-tail and 9.5 m wingspan.
  */

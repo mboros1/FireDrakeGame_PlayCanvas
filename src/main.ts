@@ -1,6 +1,6 @@
 import * as pc from 'playcanvas';
 import './style.css';
-import { TUNING } from './tuning';
+import { DWARF_SCALE, TUNING } from './tuning';
 import { World } from './sim/world';
 import { DrakeSim } from './sim/drake';
 import { DwarfSim } from './sim/dwarf';
@@ -338,6 +338,8 @@ class Dwarf {
     this.leftArm = makePrimitive('Left arm', 'capsule', this.root, new pc.Vec3(-.75, 1.18, 0), new pc.Vec3(.24, .72, .24), mats.skin, new pc.Vec3(0, 0, -15));
     this.rightArm = makePrimitive('Right arm', 'capsule', this.root, new pc.Vec3(.75, 1.18, 0), new pc.Vec3(.24, .72, .24), mats.skin, new pc.Vec3(0, 0, 15));
     world.addChild(this.root);
+    // Authored at 2.4 m; scaled to the 1.3 m the scale bible anchors on.
+    this.root.setLocalScale(DWARF_SCALE, DWARF_SCALE, DWARF_SCALE);
     this.root.setPosition(x, 0, z);
   }
 
@@ -363,7 +365,7 @@ class Dwarf {
 
     // Presentation: a run bob and arm flail derived from the burning flag.
     const run = Math.sin(elapsed * (burning ? 15 : 9));
-    this.root.setPosition(scratch.x, Math.abs(run) * .08, scratch.z);
+    this.root.setPosition(scratch.x, Math.abs(run) * .08 * DWARF_SCALE, scratch.z);
     this.root.setEulerAngles(0, scratch.yaw, 0);
     const flail = burning ? Math.sin(elapsed * 23) * 105 : run * 28;
     this.leftArm.setLocalEulerAngles(flail, 0, -20);
