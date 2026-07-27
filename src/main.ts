@@ -3,6 +3,8 @@ import './style.css';
 import { TUNING } from './tuning';
 import { World } from './sim/world';
 import { DrakeSim } from './sim/drake';
+import { DwarfSim } from './sim/dwarf';
+import { Rng } from './sim/random';
 import type { Input, Transform } from './sim/types';
 
 type SceneName = 'cave' | 'forest' | 'forestExtract';
@@ -100,6 +102,9 @@ app.root.addChild(world);
  * PlayCanvas and is what phase 3 replaces with forge on wasm32.
  */
 const simWorld = new World();
+
+/** Simulation randomness. Seeded so a tick sequence is reproducible. */
+const simRng = new Rng(0xf13d2a4e);
 
 /** Reused per frame so the input path allocates nothing. */
 const frameInput: Input = {
@@ -314,30 +319,66 @@ class Drake {
   }
 }
 
+/**
+ * View-side dwarf: primitives, arm flail and attached flames. Wandering and
+ * the burn timer live in `DwarfSim`.
+ */
 class Dwarf {
   readonly root = new pc.Entity('Dwarf');
+  readonly sim: DwarfSim;
   private leftArm: pc.Entity;
   private rightArm: pc.Entity;
   private flames: pc.Entity[] = [];
-  private target = new pc.Vec3();
-  private retarget = 0;
-  private burning = 0;
-  dead = false;
 
-  constructor(position: pc.Vec3) {
+  constructor(x: number, z: number) {
+    this.sim = new DwarfSim(simWorld, simRng, x, z);
     makePrimitive('Body', 'capsule', this.root, new pc.Vec3(0, 1.05, 0), new pc.Vec3(.62, .82, .62), mats.dwarf);
     makePrimitive('Head', 'sphere', this.root, new pc.Vec3(0, 2.05, 0), new pc.Vec3(.7, .7, .7), mats.skin);
     makePrimitive('Beard', 'cone', this.root, new pc.Vec3(0, 1.72, -.42), new pc.Vec3(.48, .82, .48), mats.gold);
     this.leftArm = makePrimitive('Left arm', 'capsule', this.root, new pc.Vec3(-.75, 1.18, 0), new pc.Vec3(.24, .72, .24), mats.skin, new pc.Vec3(0, 0, -15));
     this.rightArm = makePrimitive('Right arm', 'capsule', this.root, new pc.Vec3(.75, 1.18, 0), new pc.Vec3(.24, .72, .24), mats.skin, new pc.Vec3(0, 0, 15));
     world.addChild(this.root);
-    this.root.setPosition(position);
-    this.chooseTarget();
+    this.root.setPosition(x, 0, z);
+  }
+
+  get dead() {
+    return this.sim.dead;
   }
 
   ignite() {
-    if (this.burning > 0) return;
-    this.burning = 5;
+    this.sim.ignite(simWorld);
+  }
+
+  update(dt: number, elapsed: number) {
+    if (this.sim.dead) return;
+    this.sim.update(simWorld, dt);
+
+    if (this.sim.dead) {
+      this.root.destroy();
+      return;
+    }
+
+    simWorld.state.transform(this.sim.id, scratch);
+    const burning = this.sim.burning;
+
+    // Presentation: a run bob and arm flail derived from the burning flag.
+    const run = Math.sin(elapsed * (burning ? 15 : 9));
+    this.root.setPosition(scratch.x, Math.abs(run) * .08, scratch.z);
+    this.root.setEulerAngles(0, scratch.yaw, 0);
+    const flail = burning ? Math.sin(elapsed * 23) * 105 : run * 28;
+    this.leftArm.setLocalEulerAngles(flail, 0, -20);
+    this.rightArm.setLocalEulerAngles(-flail * .8, 0, 20);
+
+    if (burning) {
+      if (this.flames.length === 0) this.attachFlames();
+      this.flames.forEach((flame, i) => {
+        const flicker = .65 + Math.sin(elapsed * 18 + i) * .25;
+        flame.setLocalScale(.18 * flicker, .48 * flicker, .18 * flicker);
+      });
+    }
+  }
+
+  private attachFlames() {
     for (let i = 0; i < 7; i++) {
       this.flames.push(makePrimitive(
         `Attached fire ${i}`, 'sphere', this.root,
@@ -345,42 +386,6 @@ class Dwarf {
         new pc.Vec3(.18, .4, .18), mats.fire
       ));
     }
-  }
-
-  update(dt: number, elapsed: number) {
-    if (this.dead) return;
-    this.retarget -= dt;
-    if (this.retarget <= 0 || this.root.getPosition().distance(this.target) < 1.2) this.chooseTarget();
-    const delta = this.target.clone().sub(this.root.getPosition());
-    delta.y = 0;
-    if (delta.lengthSq() > .01) {
-      delta.normalize();
-      this.root.translate(delta.x * dt * (this.burning ? 4.3 : 2.4), 0, delta.z * dt * (this.burning ? 4.3 : 2.4));
-      this.root.lookAt(this.root.getPosition().clone().add(delta));
-    }
-
-    const run = Math.sin(elapsed * (this.burning ? 15 : 9));
-    this.root.setLocalPosition(this.root.getLocalPosition().x, Math.abs(run) * .08, this.root.getLocalPosition().z);
-    const flail = this.burning ? Math.sin(elapsed * 23) * 105 : run * 28;
-    this.leftArm.setLocalEulerAngles(flail, 0, -20);
-    this.rightArm.setLocalEulerAngles(-flail * .8, 0, 20);
-
-    if (this.burning > 0) {
-      this.burning -= dt;
-      this.flames.forEach((flame, i) => {
-        const flicker = .65 + Math.sin(elapsed * 18 + i) * .25;
-        flame.setLocalScale(.18 * flicker, .48 * flicker, .18 * flicker);
-      });
-      if (this.burning <= 0) {
-        this.dead = true;
-        this.root.destroy();
-      }
-    }
-  }
-
-  private chooseTarget() {
-    this.target.set((Math.random() - .5) * 76, 0, (Math.random() - .5) * 76);
-    this.retarget = 2 + Math.random() * 4;
   }
 }
 
@@ -442,7 +447,8 @@ function emitBreath(origin: pc.Vec3, forward: pc.Vec3) {
 function hitDwarves(origin: pc.Vec3, forward: pc.Vec3) {
   for (const dwarf of dwarves) {
     if (dwarf.dead) continue;
-    const delta = dwarf.root.getPosition().clone().sub(origin);
+    if (!simWorld.state.transform(dwarf.sim.id, scratch)) continue;
+    const delta = new pc.Vec3(scratch.x - origin.x, scratch.y - origin.y, scratch.z - origin.z);
     const distance = delta.length();
     if (distance < 11 && delta.normalize().dot(forward) > .78) dwarf.ignite();
   }
@@ -452,6 +458,10 @@ function clearWorld() {
   for (const child of [...world.children]) {
     if (child !== drake.root) child.destroy();
   }
+  // Destroy the simulated dwarves individually rather than clearing the store:
+  // a full clear would invalidate the drake's handle too, and it survives
+  // scene changes.
+  for (const dwarf of dwarves) simWorld.destroy(dwarf.sim.id);
   dwarves.length = 0;
   breathParticles.length = 0;
   extractedObjects = 0;
@@ -585,7 +595,7 @@ async function buildExtractedForestSector() {
 
 function spawnDwarf() {
   if (dwarves.filter(dwarf => !dwarf.dead).length >= 12) return;
-  dwarves.push(new Dwarf(new pc.Vec3((Math.random() - .5) * 70, 0, (Math.random() - .5) * 60)));
+  dwarves.push(new Dwarf(simRng.spread(35), simRng.spread(30)));
 }
 
 async function transitionToForest() {
@@ -698,6 +708,11 @@ app.on('update', (dt: number) => {
   }
 
   dwarves.forEach(dwarf => dwarf.update(dt, elapsed));
+  // Burnt-out dwarves would otherwise accumulate in this array for the life of
+  // the session; their simulated entities are already gone.
+  for (let i = dwarves.length - 1; i >= 0; i--) {
+    if (dwarves[i].dead) dwarves.splice(i, 1);
+  }
   if (sceneName === 'forest') {
     spawnTimer -= dt;
     if (spawnTimer <= 0) {
@@ -709,7 +724,7 @@ app.on('update', (dt: number) => {
   }
 
   stats.textContent = sceneName === 'forest'
-    ? `${dwarves.filter(dwarf => !dwarf.dead).length} DWARVES · ${dwarves.filter(dwarf => !dwarf.dead && dwarf['burning'] > 0).length} BURNING`
+    ? `${dwarves.filter(dwarf => !dwarf.dead).length} DWARVES · ${dwarves.filter(dwarf => !dwarf.dead && dwarf.sim.burning).length} BURNING`
     : sceneName === 'forestExtract'
       ? `${extractedObjects} EXTRACTED OBJECTS`
       : 'LAVA CAVE';
