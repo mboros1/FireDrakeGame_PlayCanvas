@@ -3,18 +3,64 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" href="data:," />
-    <title>Fire Drake — PlayCanvas Prototype</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=IM+Fell+English+SC&display=swap" rel="stylesheet" />
+    <title>Fire Drake — A Storybook Rampage</title>
   </head>
   <body>
     <canvas id="game"></canvas>
+
     <div id="hud">
-      <div class="brand">FIRE DRAKE</div>
-      <div id="objective"></div>
-      <div class="controls">Click for mouse look · WASD move · Shift charge · Space breathe fire · Wheel zoom · Esc release mouse</div>
+      <header class="chapter">
+        <div class="brand">Fire Drake</div>
+        <div id="chapter-number" class="chapter-number"></div>
+        <div id="objective" class="chapter-title"></div>
+      </header>
+
+      <aside id="mayhem" class="mayhem hidden">
+        <div class="mayhem-label">Mayhem</div>
+        <div class="seal"><span id="score">0</span></div>
+        <div id="tier" class="tier"></div>
+        <div id="combo" class="combo"></div>
+      </aside>
+
+      <div id="narrator" class="narrator"><span></span></div>
+
+      <div class="controls">
+        <div class="controls-title">A Note on Drakery</div>
+        <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> prowl</div>
+        <div><kbd>Shift</kbd> charge &amp; flatten</div>
+        <div><kbd>Space</kbd> breathe fire</div>
+        <div><kbd>Click</kbd> mouse look · <kbd>Wheel</kbd> zoom</div>
+        <div><kbd>M</kbd> hush the minstrel</div>
+      </div>
+
       <div id="stats"></div>
+      <div id="popups"></div>
     </div>
-    <div id="loading"><span>Leaving the lava cave…</span></div>
+
+    <div id="cover">
+      <div class="cover-board">
+        <div class="cover-rule"></div>
+        <div class="cover-kicker">A Storybook Rampage</div>
+        <h1>Fire Drake</h1>
+        <div class="cover-ornament">❦</div>
+        <div class="cover-sub">being a True &amp; Regrettable Account<br />of the Burning of Little Kindling</div>
+        <div class="cover-rule"></div>
+        <div class="cover-prompt">press any key to open the book</div>
+      </div>
+    </div>
+
+    <div id="loading">
+      <div class="page">
+        <div class="page-ornament">✦ ✦ ✦</div>
+        <div class="page-text">Chapter the Second</div>
+        <div class="page-ornament">✦ ✦ ✦</div>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

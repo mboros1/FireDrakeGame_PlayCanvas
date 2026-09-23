@@ -1,20 +1,34 @@
+/**
+ * Fire Drake: a storybook rampage.
+ *
+ * Wiring only. The simulation (`src/sim/`) owns gameplay; the view
+ * (`src/view/`) draws it; this file owns the application, input, camera,
+ * scene loading, the frame loop and the `window.__FIRE_DRAKE_DEBUG__`
+ * automation surface.
+ */
+
 import * as pc from 'playcanvas';
 import './style.css';
-import { DWARF_SCALE, TUNING } from './tuning';
+import { TUNING } from './tuning';
 import { World } from './sim/world';
 import { DrakeSim } from './sim/drake';
-import { DwarfSim } from './sim/dwarf';
 import { Rng } from './sim/random';
-import type { Input, Transform } from './sim/types';
+import { Rampage, type RampageEvent } from './sim/rampage';
+import { PropKind } from './sim/props';
+import { buildVillageLayout } from './sim/village';
+import type { Input } from './sim/types';
+import { initPaper } from './view/paper';
+import { Stage } from './view/stage';
+import { Fx } from './view/fx';
+import { Puppet } from './view/puppet';
+import { DrakeView, loadAsset } from './view/drake';
+import { GRADES, PostStack } from './view/post';
+import { Hud } from './view/hud';
+import { Sound } from './view/audio';
 
 type SceneName = 'cave' | 'forest' | 'forestExtract';
 type SavedState = { scene: SceneName; x: number; z: number; yaw: number };
-type ForestAsset = {
-  name: string;
-  category: string;
-  browser_glb: string;
-  exported: boolean;
-};
+type ForestAsset = { name: string; category: string; browser_glb: string; exported: boolean };
 type ForestInstance = {
   name: string;
   source: 'placed_actor' | 'foliage';
@@ -25,14 +39,9 @@ type ForestInstance = {
 };
 type ForestManifest = {
   source_level: string;
-  sector: {
-    browser_ground_size_m: number;
-    player_start_position: [number, number, number];
-    radius_cm: number;
-  };
+  sector: { browser_ground_size_m: number; player_start_position: [number, number, number]; radius_cm: number };
   assets: Record<string, ForestAsset>;
   instances: ForestInstance[];
-  skipped_foliage: { mesh: string; nearby_instances: number; reason: string }[];
 };
 
 declare global {
@@ -47,377 +56,119 @@ declare global {
 }
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
-const objective = document.querySelector<HTMLDivElement>('#objective')!;
-const stats = document.querySelector<HTMLDivElement>('#stats')!;
-const loading = document.querySelector<HTMLDivElement>('#loading')!;
+const params = new URLSearchParams(window.location.search);
+// Automated runs get the cheap pipeline: same game, fewer passes.
+const quality = (params.get('quality') ?? (navigator.webdriver ? 'low' : 'high')) as 'high' | 'low';
 
 const previous = import.meta.hot?.data.state as SavedState | undefined;
 const app = new pc.Application(canvas, {
-  graphicsDeviceOptions: { antialias: true, alpha: false }
+  graphicsDeviceOptions: { antialias: false, alpha: false }
 });
 app.setCanvasFillMode(pc.FILLMODE_FILL_WINDOW);
 app.setCanvasResolution(pc.RESOLUTION_AUTO);
+app.graphicsDevice.maxPixelRatio = Math.min(window.devicePixelRatio, quality === 'high' ? 2 : 1);
 app.start();
-
-const material = (color: pc.Color, emissive?: pc.Color) => {
-  const result = new pc.StandardMaterial();
-  result.diffuse = color;
-  result.gloss = 18;
-  if (emissive) {
-    result.emissive = emissive;
-    result.emissiveIntensity = 2.2;
-  }
-  result.update();
-  return result;
-};
-
-const mats = {
-  lava: material(new pc.Color(.24, .025, .005), new pc.Color(1, .09, .005)),
-  rock: material(new pc.Color(.13, .105, .09)),
-  grass: material(new pc.Color(.12, .32, .09)),
-  grass2: material(new pc.Color(.22, .43, .12)),
-  bark: material(new pc.Color(.22, .11, .045)),
-  leaf: material(new pc.Color(.19, .48, .12)),
-  leaf2: material(new pc.Color(.42, .62, .12)),
-  drake: material(new pc.Color(.38, .035, .018)),
-  wing: material(new pc.Color(.65, .09, .025)),
-  dwarf: material(new pc.Color(.24, .29, .34)),
-  skin: material(new pc.Color(.62, .34, .20)),
-  fire: material(new pc.Color(1, .18, .01), new pc.Color(1, .1, .005)),
-  gold: material(new pc.Color(.55, .3, .04), new pc.Color(.15, .055, 0)),
-  extractedTree: material(new pc.Color(.2, .43, .12)),
-  extractedBush: material(new pc.Color(.28, .5, .13)),
-  extractedStone: material(new pc.Color(.29, .31, .27)),
-  extractedFlower: material(new pc.Color(.75, .22, .48)),
-  extractedMushroom: material(new pc.Color(.72, .36, .12)),
-  extractedMonument: material(new pc.Color(.46, .39, .24))
-};
+initPaper(app.graphicsDevice);
 
 const world = new pc.Entity('World');
 app.root.addChild(world);
 
-/**
- * Simulation state. Being migrated out of this file — see
- * `docs/ARCHITECTURE.md` phase 1. Everything under `src/sim/` is free of
- * PlayCanvas and is what phase 3 replaces with forge on wasm32.
- */
+// ── Simulation ─────────────────────────────────────────────────────────────
+
 const simWorld = new World();
-
-/** Simulation randomness. Seeded so a tick sequence is reproducible. */
 const simRng = new Rng(0xf13d2a4e);
+const drakeSim = new DrakeSim(simWorld, previous?.x ?? 0, previous?.z ?? 13, previous?.yaw ?? 0);
+let rampage = new Rampage(simWorld, simRng, drakeSim, undefined, false);
 
-/** Reused per frame so the input path allocates nothing. */
-const frameInput: Input = {
-  forward: 0,
-  right: 0,
-  charging: false,
-  breathing: false,
-  cameraYaw: 0
-};
-
-/** Reused for cold single-entity transform reads. */
-const scratch: Transform = { x: 0, y: 0, z: 0, yaw: 0 };
-
-/** View → sim: raw key state becomes the tick's declared intent. */
-const readInput = (): Input => {
-  frameInput.forward =
-    (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) -
-    (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0);
-  frameInput.right =
-    (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) -
-    (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
-  frameInput.charging = keys.has('ShiftLeft') || keys.has('ShiftRight');
-  frameInput.breathing = keys.has('Space');
-  frameInput.cameraYaw = cameraYaw;
-  return frameInput;
-};
-
-const makePrimitive = (
-  name: string,
-  type: 'box' | 'sphere' | 'cylinder' | 'cone' | 'capsule',
-  parent: pc.Entity,
-  position: pc.Vec3,
-  scale: pc.Vec3,
-  mat: pc.Material,
-  rotation = new pc.Vec3()
-) => {
-  const entity = new pc.Entity(name);
-  entity.addComponent('render', { type });
-  entity.render!.material = mat;
-  entity.setLocalPosition(position);
-  entity.setLocalEulerAngles(rotation);
-  entity.setLocalScale(scale);
-  parent.addChild(entity);
-  return entity;
-};
+// ── View ───────────────────────────────────────────────────────────────────
 
 const camera = new pc.Entity('Camera');
 camera.addComponent('camera', {
   clearColor: new pc.Color(.06, .08, .05),
-  farClip: 350,
+  nearClip: .15,
+  farClip: 700,
   fov: TUNING.camera.fov
 });
 app.root.addChild(camera);
+const post = new PostStack(app, camera.camera!, quality);
 
 const sun = new pc.Entity('Sun');
 sun.addComponent('light', {
   type: 'directional',
-  color: new pc.Color(1, .8, .58),
-  intensity: 1.8,
+  color: new pc.Color(1, .86, .66),
+  intensity: 2.1,
   castShadows: true,
-  shadowDistance: 100
+  shadowDistance: 70,
+  shadowResolution: quality === 'high' ? 4096 : 2048,
+  numCascades: quality === 'high' ? 2 : 1,
+  shadowType: pc.SHADOW_PCF3_32F,
+  shadowBias: .25,
+  normalOffsetBias: .06
 });
-sun.setEulerAngles(42, 28, 0);
 app.root.addChild(sun);
 
-app.scene.ambientLight = new pc.Color(.18, .2, .16);
+const fill = new pc.Entity('Sky fill');
+fill.addComponent('light', { type: 'directional', color: new pc.Color(.55, .7, .95), intensity: .45, castShadows: false });
+fill.setEulerAngles(-60, 200, 0);
+app.root.addChild(fill);
 
-const loadAsset = (url: string, type: string) =>
-  new Promise<pc.Asset>((resolve, reject) => {
-    app.assets.loadFromUrl(url, type, (error, asset) => {
-      if (error || !asset) reject(new Error(String(error ?? `Could not load ${url}`)));
-      else resolve(asset);
-    });
-  });
+const fx = new Fx(world, quality === 'high' ? 8 : 4);
+const hud = new Hud();
+const sound = new Sound();
+const drake = new DrakeView(app, drakeSim, world);
+let stage = new Stage(world);
+const puppets = new Map<number, Puppet>();
 
-/**
- * View-side drake: owns the model, materials and presentation. Gameplay state
- * lives in `DrakeSim`; this class reads it and draws it.
- */
-class Drake {
-  readonly root = new pc.Entity('Drake');
-  readonly sim: DrakeSim;
-  modelReady = false;
-  private headNode: pc.GraphNode | null = null;
-  private tailNode: pc.GraphNode | null = null;
-  private readonly visual = new pc.Entity('Fire Drake Visual');
-  private readonly placeholder = new pc.Entity('Loading Drake');
-
-  constructor() {
-    this.sim = new DrakeSim(simWorld, previous?.x ?? 0, previous?.z ?? 13, previous?.yaw ?? 0);
-    this.root.addChild(this.visual);
-    this.visual.addChild(this.placeholder);
-    makePrimitive('Body', 'capsule', this.placeholder, new pc.Vec3(0, 1.35, 0), new pc.Vec3(1.5, .65, .75), mats.drake, new pc.Vec3(0, 0, 90));
-    makePrimitive('Head', 'box', this.placeholder, new pc.Vec3(0, 2, -2), new pc.Vec3(.72, .48, 1.05), mats.drake);
-    world.addChild(this.root);
-    this.syncFromSim();
-    void this.loadRealModel();
-  }
-
-  get yaw() {
-    simWorld.state.transform(this.sim.id, scratch);
-    return scratch.yaw;
-  }
-
-  set yaw(value: number) {
-    // Read before placing: `position` returns the shared scratch transform,
-    // which `place` overwrites.
-    simWorld.state.transform(this.sim.id, scratch);
-    this.place(scratch.x, scratch.z, value);
-  }
-
-  get position() {
-    simWorld.state.transform(this.sim.id, scratch);
-    return scratch;
-  }
-
-  place(x: number, z: number, yaw?: number) {
-    this.sim.place(simWorld, x, z, yaw);
-    this.syncFromSim();
-  }
-
-  update(dt: number, elapsed: number) {
-    this.sim.update(simWorld, dt, readInput());
-    this.syncFromSim();
-
-    // Presentation only: a run bob derived from simulated speed.
-    this.visual.setLocalPosition(
-      0,
-      Math.abs(Math.sin(elapsed * 7)) * Math.min(.12, Math.abs(this.sim.speed) * .012),
-      0
-    );
-
-    if (this.sim.breathed) {
-      const origin = this.root.getPosition().clone()
-        .add(new pc.Vec3(0, 2, 0))
-        .add(new pc.Vec3(this.sim.forwardX, 0, this.sim.forwardZ).mulScalar(2.8));
-      const forward = new pc.Vec3(this.sim.forwardX, 0, this.sim.forwardZ);
-      emitBreath(origin, forward);
-      if (sceneName === 'forest') hitDwarves(this.root.getPosition(), forward);
-    }
-  }
-
-  /** Copy the simulated transform onto the rendered entity. */
-  private syncFromSim() {
-    simWorld.state.transform(this.sim.id, scratch);
-    this.root.setPosition(scratch.x, scratch.y, scratch.z);
-    this.root.setEulerAngles(0, scratch.yaw, 0);
-  }
-
-  getVisualForwardAlignment() {
-    if (!this.headNode || !this.tailNode) return null;
-    const visualForward = this.headNode.getPosition().clone().sub(this.tailNode.getPosition());
-    visualForward.y = 0;
-    if (visualForward.lengthSq() < .001) return null;
-    visualForward.normalize();
-    const yawRadians = this.yaw * pc.math.DEG_TO_RAD;
-    const gameplayForward = new pc.Vec3(-Math.sin(yawRadians), 0, -Math.cos(yawRadians));
-    return visualForward.dot(gameplayForward);
-  }
-
-  private async loadRealModel() {
-    try {
-      const [containerAsset, baseColorAsset, emissiveAsset, normalAsset] = await Promise.all([
-        loadAsset('/assets/wyvern/wyvern.glb', 'container'),
-        loadAsset('/assets/wyvern/wyvern_base.webp', 'texture'),
-        loadAsset('/assets/wyvern/wyvern_emissive.webp', 'texture'),
-        loadAsset('/assets/wyvern/wyvern_normal.webp', 'texture')
-      ]);
-      const container = containerAsset.resource as pc.ContainerResource;
-      const model = container.instantiateRenderEntity({ castShadows: true });
-      model.name = 'Actual Fire Drake';
-      model.setLocalScale(TUNING.drake.modelScale, TUNING.drake.modelScale, TUNING.drake.modelScale);
-      model.setLocalEulerAngles(
-        TUNING.drake.modelRotation.x,
-        TUNING.drake.modelRotation.y,
-        TUNING.drake.modelRotation.z
-      );
-      model.setLocalPosition(
-        TUNING.drake.modelOffset.x,
-        TUNING.drake.modelOffset.y,
-        TUNING.drake.modelOffset.z
-      );
-
-      const dragonMaterial = new pc.StandardMaterial();
-      dragonMaterial.diffuseMap = baseColorAsset.resource as pc.Texture;
-      dragonMaterial.normalMap = normalAsset.resource as pc.Texture;
-      dragonMaterial.emissiveMap = emissiveAsset.resource as pc.Texture;
-      dragonMaterial.emissive = pc.Color.WHITE;
-      dragonMaterial.emissiveIntensity = 1.6;
-      dragonMaterial.metalness = 0;
-      dragonMaterial.gloss = 28;
-      dragonMaterial.cull = pc.CULLFACE_NONE;
-      dragonMaterial.update();
-
-      for (const render of model.findComponents('render') as pc.RenderComponent[]) {
-        for (const meshInstance of render.meshInstances) meshInstance.material = dragonMaterial;
-      }
-      this.headNode = model.findByName('head_021');
-      this.tailNode = model.findByName('tip_013');
-      this.visual.addChild(model);
-      this.placeholder.enabled = false;
-      this.modelReady = true;
-      objective.textContent = sceneName === 'cave'
-        ? 'Rampage toward the forest gate'
-        : sceneName === 'forestExtract'
-          ? 'Explore the extracted Unreal forest sector'
-          : 'Cause some medieval mayhem';
-    } catch (error) {
-      console.error('The real Fire Drake model could not be loaded', error);
-      objective.textContent = 'Fire Drake asset failed to load — check the console';
-    }
-  }
-}
-
-/**
- * View-side dwarf: primitives, arm flail and attached flames. Wandering and
- * the burn timer live in `DwarfSim`.
- */
-class Dwarf {
-  readonly root = new pc.Entity('Dwarf');
-  readonly sim: DwarfSim;
-  private leftArm: pc.Entity;
-  private rightArm: pc.Entity;
-  private flames: pc.Entity[] = [];
-
-  constructor(x: number, z: number) {
-    this.sim = new DwarfSim(simWorld, simRng, x, z);
-    makePrimitive('Body', 'capsule', this.root, new pc.Vec3(0, 1.05, 0), new pc.Vec3(.62, .82, .62), mats.dwarf);
-    makePrimitive('Head', 'sphere', this.root, new pc.Vec3(0, 2.05, 0), new pc.Vec3(.7, .7, .7), mats.skin);
-    makePrimitive('Beard', 'cone', this.root, new pc.Vec3(0, 1.72, -.42), new pc.Vec3(.48, .82, .48), mats.gold);
-    this.leftArm = makePrimitive('Left arm', 'capsule', this.root, new pc.Vec3(-.75, 1.18, 0), new pc.Vec3(.24, .72, .24), mats.skin, new pc.Vec3(0, 0, -15));
-    this.rightArm = makePrimitive('Right arm', 'capsule', this.root, new pc.Vec3(.75, 1.18, 0), new pc.Vec3(.24, .72, .24), mats.skin, new pc.Vec3(0, 0, 15));
-    world.addChild(this.root);
-    // Authored at 2.4 m; scaled to the 1.3 m the scale bible anchors on.
-    this.root.setLocalScale(DWARF_SCALE, DWARF_SCALE, DWARF_SCALE);
-    this.root.setPosition(x, 0, z);
-  }
-
-  get dead() {
-    return this.sim.dead;
-  }
-
-  ignite() {
-    this.sim.ignite(simWorld);
-  }
-
-  update(dt: number, elapsed: number) {
-    if (this.sim.dead) return;
-    this.sim.update(simWorld, dt);
-
-    if (this.sim.dead) {
-      this.root.destroy();
-      return;
-    }
-
-    simWorld.state.transform(this.sim.id, scratch);
-    const burning = this.sim.burning;
-
-    // Presentation: a run bob and arm flail derived from the burning flag.
-    const run = Math.sin(elapsed * (burning ? 15 : 9));
-    this.root.setPosition(scratch.x, Math.abs(run) * .08 * DWARF_SCALE, scratch.z);
-    this.root.setEulerAngles(0, scratch.yaw, 0);
-    const flail = burning ? Math.sin(elapsed * 23) * 105 : run * 28;
-    this.leftArm.setLocalEulerAngles(flail, 0, -20);
-    this.rightArm.setLocalEulerAngles(-flail * .8, 0, 20);
-
-    if (burning) {
-      if (this.flames.length === 0) this.attachFlames();
-      this.flames.forEach((flame, i) => {
-        const flicker = .65 + Math.sin(elapsed * 18 + i) * .25;
-        flame.setLocalScale(.18 * flicker, .48 * flicker, .18 * flicker);
-      });
-    }
-  }
-
-  private attachFlames() {
-    for (let i = 0; i < 7; i++) {
-      this.flames.push(makePrimitive(
-        `Attached fire ${i}`, 'sphere', this.root,
-        new pc.Vec3((Math.random() - .5) * 1.2, .45 + Math.random() * 1.9, (Math.random() - .5) * .8),
-        new pc.Vec3(.18, .4, .18), mats.fire
-      ));
-    }
-  }
-}
-
-const drake = new Drake();
-const dwarves: Dwarf[] = [];
-const breathParticles: { entity: pc.Entity; velocity: pc.Vec3; life: number }[] = [];
+const frameInput: Input = { forward: 0, right: 0, charging: false, breathing: false, cameraYaw: 0 };
+const events: RampageEvent[] = [];
 const keys = new Set<string>();
 let sceneName: SceneName = previous?.scene ?? 'cave';
 let elapsed = 0;
-let spawnTimer = 0;
 let transitioning = false;
 let cameraYaw = previous?.yaw ?? 0;
 let cameraPitch: number = TUNING.camera.pitchDegrees;
 let cameraDistance: number = TUNING.camera.distance;
 let targetCameraDistance: number = TUNING.camera.distance;
 let pointerLockRequested = false;
+let trauma = 0;
+let fovKick = 0;
+let hitStop = 0;
 let extractedObjects = 0;
 let extractedSourceLevel: string | null = null;
 let extractedLoadError: string | null = null;
+const cameraPosition = new pc.Vec3();
+const scratch = new pc.Vec3();
+const mouth = new pc.Vec3();
+const previousDrake = new pc.Vec3();
 
-window.addEventListener('keydown', (event) => {
+const readInput = (): Input => {
+  frameInput.forward =
+    (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0);
+  frameInput.right =
+    (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
+  frameInput.charging = keys.has('ShiftLeft') || keys.has('ShiftRight');
+  frameInput.breathing = keys.has('Space');
+  frameInput.cameraYaw = cameraYaw;
+  return frameInput;
+};
+
+// ── Input ──────────────────────────────────────────────────────────────────
+
+window.addEventListener('keydown', event => {
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault();
+  if (event.code === 'KeyM' && !event.repeat) {
+    const muted = sound.toggleMute();
+    hud.pop(muted ? 'shh.' : '♪', scratch.copy(drake.root.getPosition()).add(new pc.Vec3(0, 3, 0)), 'shout', 1);
+  }
   keys.add(event.code);
 });
-window.addEventListener('keyup', (event) => keys.delete(event.code));
+window.addEventListener('keyup', event => keys.delete(event.code));
+window.addEventListener('blur', () => keys.clear());
 window.addEventListener('contextmenu', event => event.preventDefault());
 canvas.addEventListener('pointerdown', event => {
   if (event.button !== 0) return;
   pointerLockRequested = true;
-  void canvas.requestPointerLock().catch(error => {
+  void canvas.requestPointerLock()?.catch(error => {
     console.debug('Pointer lock unavailable; right-drag look remains active.', error);
   });
 });
@@ -440,125 +191,122 @@ window.addEventListener('wheel', event => {
   );
 }, { passive: true });
 
-function emitBreath(origin: pc.Vec3, forward: pc.Vec3) {
-  const entity = makePrimitive('Fire breath', 'sphere', world, origin, new pc.Vec3(.18, .18, .42), mats.fire);
-  const spread = new pc.Vec3((Math.random() - .5) * .32, (Math.random() - .25) * .18, (Math.random() - .5) * .32);
-  breathParticles.push({ entity, velocity: forward.clone().add(spread).normalize().mulScalar(18 + Math.random() * 7), life: .55 });
-}
-
-function hitDwarves(origin: pc.Vec3, forward: pc.Vec3) {
-  for (const dwarf of dwarves) {
-    if (dwarf.dead) continue;
-    if (!simWorld.state.transform(dwarf.sim.id, scratch)) continue;
-    const delta = new pc.Vec3(scratch.x - origin.x, scratch.y - origin.y, scratch.z - origin.z);
-    const distance = delta.length();
-    if (distance < 11 && delta.normalize().dot(forward) > .78) dwarf.ignite();
-  }
-}
+// ── Scenes ─────────────────────────────────────────────────────────────────
 
 function clearWorld() {
-  for (const child of [...world.children]) {
-    if (child !== drake.root) child.destroy();
-  }
-  // Destroy the simulated dwarves individually rather than clearing the store:
-  // a full clear would invalidate the drake's handle too, and it survives
-  // scene changes.
-  for (const dwarf of dwarves) simWorld.destroy(dwarf.sim.id);
-  dwarves.length = 0;
-  breathParticles.length = 0;
+  rampage.destroy();
+  for (const puppet of puppets.values()) puppet.root.destroy();
+  puppets.clear();
+  stage.destroy();
+  stage = new Stage(world);
+  fx.clear();
   extractedObjects = 0;
   extractedSourceLevel = null;
   extractedLoadError = null;
 }
 
+function lightVillage() {
+  camera.camera!.clearColor = new pc.Color(.96, .78, .6);
+  app.scene.ambientLight = new pc.Color(.42, .4, .44);
+  app.scene.fog.type = pc.FOG_LINEAR;
+  app.scene.fog.color = new pc.Color(.93, .8, .68);
+  app.scene.fog.start = 60;
+  app.scene.fog.end = 230;
+  sun.light!.color = new pc.Color(1, .84, .62);
+  sun.light!.intensity = 2.3;
+  sun.setEulerAngles(40, 30, 0);
+  fill.light!.intensity = .5;
+  post.apply(GRADES.village);
+}
+
+function lightCave() {
+  camera.camera!.clearColor = new pc.Color(.07, .03, .05);
+  app.scene.ambientLight = new pc.Color(.2, .1, .14);
+  app.scene.fog.type = pc.FOG_LINEAR;
+  app.scene.fog.color = new pc.Color(.13, .05, .08);
+  app.scene.fog.start = 25;
+  app.scene.fog.end = 110;
+  sun.light!.color = new pc.Color(.85, .55, .75);
+  sun.light!.intensity = .55;
+  sun.setEulerAngles(62, 30, 0);
+  fill.light!.intensity = .12;
+  post.apply(GRADES.cave);
+}
+
 function buildCave() {
   clearWorld();
   sceneName = 'cave';
-  camera.camera!.clearColor = new pc.Color(.055, .018, .009);
-  app.scene.ambientLight = new pc.Color(.18, .055, .025);
-  // The box primitive is a unit cube, so scale is the full extent: 116 spans
-  // +/-58, which is what the movement clamp, portal, and spawns all assume.
-  makePrimitive('Cave floor', 'box', world, new pc.Vec3(0, -.7, 0), new pc.Vec3(116, .7, 116), mats.rock);
-  makePrimitive('Lava river', 'box', world, new pc.Vec3(0, -.18, 0), new pc.Vec3(8, .18, 116), mats.lava);
-  for (let i = 0; i < 28; i++) {
-    const side = i % 2 ? -1 : 1;
-    makePrimitive('Cave rock', 'sphere', world,
-      new pc.Vec3(side * (10 + Math.random() * 35), Math.random() * 3, (Math.random() - .5) * 100),
-      new pc.Vec3(3 + Math.random() * 7, 4 + Math.random() * 8, 3 + Math.random() * 7), mats.rock);
-  }
-  makePrimitive('Portal left', 'box', world, new pc.Vec3(-5, 4, -43), new pc.Vec3(2, 6, 2), mats.rock);
-  makePrimitive('Portal right', 'box', world, new pc.Vec3(5, 4, -43), new pc.Vec3(2, 6, 2), mats.rock);
-  makePrimitive('Portal top', 'box', world, new pc.Vec3(0, 9, -43), new pc.Vec3(7, 2, 2), mats.rock);
-  objective.textContent = 'Rampage toward the forest gate';
-  drake.place(0, 13);
+  lightCave();
+  rampage = new Rampage(simWorld, simRng, drakeSim, undefined, false);
+  stage.buildCave();
+  drakeSim.place(simWorld, 0, 13, 0);
+  hud.setChapter('Chapter the First', 'In Which a Drake Grows Bored of Gold');
+  hud.setMayhemVisible(false);
+  hud.narrate('intro', true);
 }
 
 function buildForest() {
   clearWorld();
   sceneName = 'forest';
-  camera.camera!.clearColor = new pc.Color(.36, .61, .76);
-  app.scene.ambientLight = new pc.Color(.28, .34, .24);
-  makePrimitive('Forest floor', 'box', world, new pc.Vec3(0, -.6, 0), new pc.Vec3(116, .6, 116), mats.grass);
-  for (let i = 0; i < 75; i++) {
-    const x = (Math.random() - .5) * 105;
-    const z = (Math.random() - .5) * 105;
-    if (Math.abs(x) < 9 && Math.abs(z) < 20) continue;
-    const tree = new pc.Entity('Tree');
-    world.addChild(tree);
-    tree.setPosition(x, 0, z);
-    makePrimitive('Trunk', 'cylinder', tree, new pc.Vec3(0, 2.4, 0), new pc.Vec3(.45, 2.4, .45), mats.bark);
-    makePrimitive('Crown', 'cone', tree, new pc.Vec3(0, 6.3, 0), new pc.Vec3(2.4, 4.2, 2.4), i % 2 ? mats.leaf : mats.leaf2);
-  }
-  objective.textContent = 'Cause some medieval mayhem';
-  drake.place(0, 38, 0);
-  for (let i = 0; i < 6; i++) spawnDwarf();
-}
-
-function extractedMaterial(category: string) {
-  if (category === 'tree') return mats.extractedTree;
-  if (category === 'bush') return mats.extractedBush;
-  if (category === 'flower') return mats.extractedFlower;
-  if (category === 'mushroom') return mats.extractedMushroom;
-  if (category === 'monument') return mats.extractedMonument;
-  return mats.extractedStone;
+  lightVillage();
+  const layout = buildVillageLayout();
+  rampage = new Rampage(simWorld, simRng, drakeSim, layout);
+  stage.buildVillage(layout, rampage.props);
+  drakeSim.place(simWorld, layout.drakeStart.x, layout.drakeStart.z, layout.drakeStart.yaw);
+  hud.setChapter('Chapter the Second', 'In Which Little Kindling Has a Very Bad Day');
+  hud.setMayhemVisible(true);
+  hud.narrate('village', true);
 }
 
 async function buildExtractedForestSector() {
   clearWorld();
   sceneName = 'forestExtract';
-  loading.classList.add('visible');
-  camera.camera!.clearColor = new pc.Color(.36, .61, .76);
-  app.scene.ambientLight = new pc.Color(.28, .34, .24);
-  objective.textContent = 'Loading extracted Unreal forest sector…';
-  stats.textContent = 'LOADING EXTRACTED SECTOR';
-
+  lightVillage();
+  hud.setChapter('An Appendix', 'The Extracted Unreal Forest Sector');
+  hud.setMayhemVisible(false);
+  hud.setLoading(true, 'Consulting the archives…');
+  rampage = new Rampage(simWorld, simRng, drakeSim, undefined, false);
+  const grass = new pc.StandardMaterial();
+  grass.diffuse = new pc.Color(.12, .32, .09);
+  grass.update();
+  const categories: Record<string, pc.Color> = {
+    tree: new pc.Color(.2, .43, .12),
+    bush: new pc.Color(.28, .5, .13),
+    flower: new pc.Color(.75, .22, .48),
+    mushroom: new pc.Color(.72, .36, .12),
+    monument: new pc.Color(.46, .39, .24)
+  };
+  const materials = new Map<string, pc.StandardMaterial>();
+  const materialFor = (category: string) => {
+    let m = materials.get(category);
+    if (!m) {
+      m = new pc.StandardMaterial();
+      m.diffuse = categories[category] ?? new pc.Color(.29, .31, .27);
+      m.update();
+      materials.set(category, m);
+    }
+    return m;
+  };
   try {
     const response = await fetch('/assets/forest-sector/forest-sector.json');
     if (!response.ok) throw new Error(`Manifest request failed: ${response.status}`);
     const manifest = await response.json() as ForestManifest;
     extractedSourceLevel = manifest.source_level;
     const groundSize = manifest.sector.browser_ground_size_m;
-    makePrimitive(
-      'Extracted sector ground approximation',
-      'box',
-      world,
-      new pc.Vec3(0, -.5, 0),
-      // Full extent, not half: browser_ground_size_m is the span, and the box
-      // primitive is a unit cube.
-      new pc.Vec3(groundSize, .5, groundSize),
-      mats.grass
-    );
+    const ground = new pc.Entity('Extracted sector ground approximation');
+    ground.addComponent('render', { type: 'box' });
+    ground.render!.material = grass;
+    ground.setLocalPosition(0, -.5, 0);
+    // Full extent, not half: browser_ground_size_m is the span.
+    ground.setLocalScale(groundSize, .5, groundSize);
+    stage.root.addChild(ground);
 
     const browserAssets = new Map<string, { definition: ForestAsset; container: pc.ContainerResource }>();
     await Promise.all(Object.entries(manifest.assets).map(async ([meshPath, definition]) => {
       if (!definition.exported) return;
-      const asset = await loadAsset(definition.browser_glb, 'container');
-      browserAssets.set(meshPath, {
-        definition,
-        container: asset.resource as pc.ContainerResource
-      });
+      const asset = await loadAsset(app, definition.browser_glb, 'container');
+      browserAssets.set(meshPath, { definition, container: asset.resource as pc.ContainerResource });
     }));
-
     for (const instance of manifest.instances) {
       const browserAsset = browserAssets.get(instance.mesh);
       if (!browserAsset) continue;
@@ -566,75 +314,105 @@ async function buildExtractedForestSector() {
       model.name = `Extracted ${instance.name}`;
       model.setLocalPosition(...instance.position);
       model.setLocalEulerAngles(...instance.rotation);
-      model.setLocalScale(
-        instance.scale[0] * .01,
-        instance.scale[1] * .01,
-        instance.scale[2] * .01
-      );
+      model.setLocalScale(instance.scale[0] * .01, instance.scale[1] * .01, instance.scale[2] * .01);
       for (const render of model.findComponents('render') as pc.RenderComponent[]) {
         if (render.entity.name.startsWith('UCX_')) {
           render.entity.enabled = false;
           continue;
         }
-        for (const meshInstance of render.meshInstances) {
-          meshInstance.material = extractedMaterial(browserAsset.definition.category);
-        }
+        for (const meshInstance of render.meshInstances) meshInstance.material = materialFor(browserAsset.definition.category);
       }
-      world.addChild(model);
+      stage.root.addChild(model);
       extractedObjects++;
     }
-
-    drake.place(0, 0, 0);
-    objective.textContent = 'Explore the extracted Unreal forest sector';
+    drakeSim.place(simWorld, 0, 0, 0);
   } catch (error) {
     extractedLoadError = error instanceof Error ? error.message : String(error);
     console.error('The extracted Unreal forest sector could not be loaded', error);
-    objective.textContent = 'Extracted forest failed to load — check the console';
   } finally {
-    loading.classList.remove('visible');
+    hud.setLoading(false);
   }
-}
-
-function spawnDwarf() {
-  if (dwarves.filter(dwarf => !dwarf.dead).length >= 12) return;
-  dwarves.push(new Dwarf(simRng.spread(35), simRng.spread(30)));
 }
 
 async function transitionToForest() {
   if (transitioning) return;
   transitioning = true;
-  loading.classList.add('visible');
-  await new Promise(resolve => setTimeout(resolve, 700));
+  sound.pageTurn();
+  hud.setLoading(true, 'Chapter the Second');
+  await new Promise(resolve => setTimeout(resolve, 900));
   buildForest();
-  await new Promise(resolve => setTimeout(resolve, 350));
-  loading.classList.remove('visible');
+  await new Promise(resolve => setTimeout(resolve, 450));
+  hud.setLoading(false);
   transitioning = false;
 }
 
-const requestedLevel = new URLSearchParams(window.location.search).get('level');
+const requestedLevel = params.get('level');
 if (requestedLevel === 'extracted') void buildExtractedForestSector();
 else if (sceneName === 'forest') buildForest();
 else buildCave();
 
+// ── Events: the simulation told us something happened ──────────────────────
+
+function handleEvent(event: RampageEvent) {
+  scratch.set(event.x, 0, event.z);
+  const near = Math.max(0, 1 - scratch.distance(drake.root.getPosition()) / 30);
+  hud.handle(event, scratch);
+  switch (event.type) {
+    case 'dwarfIgnited':
+      sound.yelp();
+      trauma = Math.min(1, trauma + .08 * near);
+      break;
+    case 'dwarfLaunched':
+      sound.boing();
+      fx.burst(scratch.clone().add(new pc.Vec3(0, .6, 0)), 14);
+      trauma = Math.min(1, trauma + .35);
+      hitStop = .06;
+      if (Math.random() < .6) setTimeout(() => sound.yelp(), 120);
+      break;
+    case 'dwarfLanded':
+      sound.thump(.25 * near + .05);
+      fx.burst(scratch, 4, false);
+      break;
+    case 'dwarfGone':
+      fx.ghost(scratch);
+      break;
+    case 'propIgnited':
+      if (event.kind === PropKind.Cottage || event.kind === PropKind.Maypole) {
+        sound.whoomp();
+        trauma = Math.min(1, trauma + .3 * near);
+      }
+      break;
+    case 'propFlattened':
+      sound.crumple(event.kind === PropKind.Cottage ? 1.6 : .7);
+      fx.burst(scratch.clone().add(new pc.Vec3(0, .5, 0)), event.kind === PropKind.Cottage ? 30 : 10);
+      trauma = Math.min(1, trauma + (event.kind === PropKind.Cottage ? .6 : .2));
+      hitStop = event.kind === PropKind.Cottage ? .1 : .04;
+      break;
+    case 'bump':
+      if (drakeSim.speed > 4) trauma = Math.min(1, trauma + .1);
+      break;
+    default:
+      break;
+  }
+  if ('combo' in event && event.combo > 0 && event.combo % 8 === 0) sound.fanfare();
+}
+
+// ── Debug surface. Must survive every refactor: tests and MCP depend on it ──
+
 window.__FIRE_DRAKE_DEBUG__ = {
   getState: () => {
     const drakePosition = drake.root.getPosition();
-    const cameraPosition = camera.getPosition();
+    const cameraAt = camera.getPosition();
     return {
       scene: sceneName,
       modelReady: drake.modelReady,
       pointerLocked: document.pointerLockElement === canvas,
       pointerLockRequested,
-      drake: {
-        x: drakePosition.x,
-        y: drakePosition.y,
-        z: drakePosition.z,
-        yaw: drake.yaw
-      },
+      drake: { x: drakePosition.x, y: drakePosition.y, z: drakePosition.z, yaw: drakeYaw() },
       camera: {
-        x: cameraPosition.x,
-        y: cameraPosition.y,
-        z: cameraPosition.z,
+        x: cameraAt.x,
+        y: cameraAt.y,
+        z: cameraAt.z,
         yaw: cameraYaw,
         pitch: cameraPitch,
         distance: cameraDistance,
@@ -644,92 +422,133 @@ window.__FIRE_DRAKE_DEBUG__ = {
         scale: TUNING.drake.modelScale,
         rotation: { ...TUNING.drake.modelRotation },
         offset: { ...TUNING.drake.modelOffset },
-        forwardAlignment: drake.getVisualForwardAlignment()
+        forwardAlignment: drake.getVisualForwardAlignment(drakeYaw()),
+        bounds: drake.bounds()
       },
       effects: {
-        breathParticles: breathParticles.length,
-        activeDwarves: dwarves.filter(dwarf => !dwarf.dead).length
+        breathParticles: fx.countOf('breath'),
+        activeDwarves: rampage.livingDwarves,
+        burningProps: stage.props.filter(p => p.burning).length,
+        particles: fx.count
       },
-      extracted: {
-        objects: extractedObjects,
-        sourceLevel: extractedSourceLevel,
-        loadError: extractedLoadError
-      }
+      mayhem: { score: rampage.score, combo: rampage.combo, bestCombo: rampage.bestCombo },
+      extracted: { objects: extractedObjects, sourceLevel: extractedSourceLevel, loadError: extractedLoadError }
     };
   },
-  teleport: (x: number, z: number) => drake.place(x, z),
+  teleport: (x: number, z: number) => {
+    drakeSim.place(simWorld, x, z);
+    drake.sync(simWorld.state);
+  },
   loadScene: (name: SceneName) => {
     if (name === 'forestExtract') void buildExtractedForestSector();
     else if (name === 'forest') buildForest();
     else buildCave();
   },
   resetCamera: () => {
-    cameraYaw = drake.yaw;
+    cameraYaw = drakeYaw();
     cameraPitch = TUNING.camera.pitchDegrees;
     cameraDistance = TUNING.camera.distance;
     targetCameraDistance = TUNING.camera.distance;
   }
 };
 
-app.on('update', (dt: number) => {
-  elapsed += dt;
-  drake.update(dt, elapsed);
+function drakeYaw() {
+  const t = { x: 0, y: 0, z: 0, yaw: 0 };
+  simWorld.state.transform(drakeSim.id, t);
+  return t.yaw;
+}
 
+// ── Frame ──────────────────────────────────────────────────────────────────
+
+app.on('update', (frameDt: number) => {
+  elapsed += frameDt;
+  // Hit-stop: a few frames of near-freeze on a big impact sells the weight.
+  const dt = hitStop > 0 ? frameDt * .12 : frameDt;
+  hitStop = Math.max(0, hitStop - frameDt);
+
+  previousDrake.copy(drake.root.getPosition());
+  rampage.tick(dt, readInput());
+  drake.update(simWorld.state, dt, elapsed);
+
+  // Breath presentation.
+  const breathing = drakeSim.breathed;
+  if (breathing) {
+    drake.mouthPosition(mouth);
+    const forward = new pc.Vec3(drakeSim.forwardX, -.04, drakeSim.forwardZ);
+    const drakeVelocity = drake.root.getPosition().clone().sub(previousDrake).mulScalar(1 / Math.max(dt, 1e-4));
+    fx.breath(mouth, forward, drakeVelocity);
+    trauma = Math.max(trauma, .06);
+  }
+  sound.breath(keys.has('Space'));
+
+  // Puppets appear and disappear with their simulated dwarves.
+  const living = new Set<number>();
+  for (const dwarf of rampage.dwarves) {
+    if (dwarf.dead) continue;
+    living.add(dwarf.id);
+    let puppet = puppets.get(dwarf.id);
+    if (!puppet) {
+      puppet = new Puppet(dwarf, world);
+      puppets.set(dwarf.id, puppet);
+    }
+    puppet.update(simWorld.state, dt, elapsed, camera, fx);
+  }
+  for (const [id, puppet] of puppets) {
+    if (!living.has(id)) {
+      puppet.root.destroy();
+      puppets.delete(id);
+    }
+  }
+
+  rampage.drainEvents(events);
+  for (const event of events) handleEvent(event);
+  events.length = 0;
+
+  const fires = stage.update(dt, elapsed, fx);
+  for (const dwarf of rampage.dwarves) {
+    if (dwarf.burning && puppets.has(dwarf.id)) fires.push({ position: puppets.get(dwarf.id)!.root.getPosition(), strength: .5 });
+  }
+  if (breathing) fires.push({ position: mouth.clone(), strength: 1.2 });
+  fx.assignLights(fires);
+  fx.update(dt, camera, elapsed);
+  sound.fires(fires.length);
+  sound.update(rampage.combo, sceneName === 'cave');
+
+  // Camera: follow, zoom, charge kick, shake.
   const drakePosition = drake.root.getPosition();
-  cameraDistance = pc.math.lerp(cameraDistance, targetCameraDistance, Math.min(1, dt * 12));
+  cameraDistance = pc.math.lerp(cameraDistance, targetCameraDistance, Math.min(1, frameDt * 12));
+  const charging = drakeSim.speed > TUNING.drake.walkSpeed + 1;
+  fovKick = pc.math.lerp(fovKick, charging ? 9 : 0, Math.min(1, frameDt * 4));
+  camera.camera!.fov = TUNING.camera.fov + fovKick;
   const cameraYawRadians = cameraYaw * pc.math.DEG_TO_RAD;
   const pitch = cameraPitch * pc.math.DEG_TO_RAD;
-  const horizontalDistance = Math.cos(pitch) * cameraDistance;
+  const distance = cameraDistance + fovKick * .12;
+  const horizontalDistance = Math.cos(pitch) * distance;
   const desiredCamera = drakePosition.clone().add(new pc.Vec3(
     Math.sin(cameraYawRadians) * horizontalDistance,
-    TUNING.camera.targetHeight + Math.sin(pitch) * cameraDistance,
+    TUNING.camera.targetHeight + Math.sin(pitch) * distance,
     Math.cos(cameraYawRadians) * horizontalDistance
   ));
-  camera.setPosition(camera.getPosition().lerp(
-    camera.getPosition(),
-    desiredCamera,
-    Math.min(1, dt * TUNING.camera.followResponsiveness)
-  ));
-  const facing = new pc.Vec3(-Math.sin(drake.yaw * pc.math.DEG_TO_RAD), 0, -Math.cos(drake.yaw * pc.math.DEG_TO_RAD));
-  camera.lookAt(
-    drakePosition.clone()
-      .add(new pc.Vec3(0, TUNING.camera.targetHeight, 0))
-      .add(facing.mulScalar(TUNING.camera.lookAhead))
+  cameraPosition.lerp(cameraPosition.lengthSq() === 0 ? desiredCamera : cameraPosition, desiredCamera, Math.min(1, frameDt * TUNING.camera.followResponsiveness));
+  trauma = Math.max(0, trauma - frameDt * 1.6);
+  const shake = trauma * trauma;
+  camera.setPosition(
+    cameraPosition.x + (Math.sin(elapsed * 47) + Math.sin(elapsed * 31)) * shake * .18,
+    cameraPosition.y + (Math.sin(elapsed * 53) + Math.sin(elapsed * 23)) * shake * .14,
+    cameraPosition.z + (Math.sin(elapsed * 41) + Math.sin(elapsed * 37)) * shake * .18
   );
+  const facing = new pc.Vec3(-Math.sin(drakeYaw() * pc.math.DEG_TO_RAD), 0, -Math.cos(drakeYaw() * pc.math.DEG_TO_RAD));
+  camera.lookAt(drakePosition.clone().add(new pc.Vec3(0, TUNING.camera.targetHeight, 0)).add(facing.mulScalar(TUNING.camera.lookAhead)));
+  post.focusAt(camera.getPosition().distance(drakePosition));
 
-  for (let i = breathParticles.length - 1; i >= 0; i--) {
-    const particle = breathParticles[i];
-    particle.life -= dt;
-    particle.entity.translate(particle.velocity.x * dt, particle.velocity.y * dt, particle.velocity.z * dt);
-    const scale = Math.max(.05, particle.life * 1.3);
-    particle.entity.setLocalScale(scale, scale, scale * 2);
-    if (particle.life <= 0) {
-      particle.entity.destroy();
-      breathParticles.splice(i, 1);
-    }
-  }
+  if (sceneName === 'cave' && drakePosition.z < -38) void transitionToForest();
 
-  dwarves.forEach(dwarf => dwarf.update(dt, elapsed));
-  // Burnt-out dwarves would otherwise accumulate in this array for the life of
-  // the session; their simulated entities are already gone.
-  for (let i = dwarves.length - 1; i >= 0; i--) {
-    if (dwarves[i].dead) dwarves.splice(i, 1);
-  }
-  if (sceneName === 'forest') {
-    spawnTimer -= dt;
-    if (spawnTimer <= 0) {
-      spawnTimer = 2.5;
-      spawnDwarf();
-    }
-  } else if (drakePosition.z < -38) {
-    void transitionToForest();
-  }
-
-  stats.textContent = sceneName === 'forest'
-    ? `${dwarves.filter(dwarf => !dwarf.dead).length} DWARVES · ${dwarves.filter(dwarf => !dwarf.dead && dwarf.sim.burning).length} BURNING`
+  hud.update(frameDt, camera.camera!, rampage.score, rampage.combo, keys.size > 0);
+  hud.setStats(sceneName === 'forest'
+    ? `${rampage.livingDwarves} dwarves · ${rampage.burningDwarves} alight · best chain ×${rampage.bestCombo}`
     : sceneName === 'forestExtract'
-      ? `${extractedObjects} EXTRACTED OBJECTS`
-      : 'LAVA CAVE';
+      ? `${extractedObjects} extracted objects`
+      : 'the hoard');
 });
 
 window.addEventListener('resize', () => app.resizeCanvas());
@@ -737,7 +556,7 @@ window.addEventListener('resize', () => app.resizeCanvas());
 if (import.meta.hot) {
   import.meta.hot.dispose(data => {
     const position = drake.root.getPosition();
-    data.state = { scene: sceneName, x: position.x, z: position.z, yaw: drake.yaw } satisfies SavedState;
+    data.state = { scene: sceneName, x: position.x, z: position.z, yaw: drakeYaw() } satisfies SavedState;
     app.destroy();
   });
 }

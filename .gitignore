@@ -17,3 +17,7 @@ assets-source/
 # Former void repository metadata, kept on disk for reference. History was
 # replayed into git; each commit carries a `void-commit:` trailer.
 .void/
+
+# Editor swap files
+*.swp
+*.swo

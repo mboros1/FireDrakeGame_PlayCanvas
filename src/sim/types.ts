@@ -31,7 +31,9 @@ export type EntityId = number & { readonly [entityIdBrand]: true };
 export enum EntityKind {
   Drake = 0,
   Dwarf = 1,
-  BreathParticle = 2
+  BreathParticle = 2,
+  /** Static scenery that can burn or be flattened: trees, cottages, hay. */
+  Prop = 3
 }
 
 /** Per-entity state bits. Presentation reads these; it does not set them. */
@@ -42,7 +44,15 @@ export enum EntityFlags {
   /** Drake emitted breath this tick. */
   Breathing = 1 << 1,
   /** Entity is on the ground rather than airborne. */
-  Grounded = 1 << 2
+  Grounded = 1 << 2,
+  /** Prop has burned out and is scenery ash. */
+  Charred = 1 << 3,
+  /** Dwarf is tumbling through the air after a charge. */
+  Airborne = 1 << 4,
+  /** Prop was charged flat. */
+  Flattened = 1 << 5,
+  /** Dwarf is seeing stars. */
+  Stunned = 1 << 6
 }
 
 /** Movement state. Replicated; the client's animation graph reads it. */
