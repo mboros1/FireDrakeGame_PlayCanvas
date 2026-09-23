@@ -1,4 +1,9 @@
+import { existsSync } from 'node:fs';
 import { defineConfig } from '@playwright/test';
+
+// Local runs use the installed Chrome (Metal-backed WebGL); elsewhere, the
+// Playwright-managed browser if one is installed.
+const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 export default defineConfig({
   testDir: './tests',
@@ -9,9 +14,7 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:4173',
     headless: true,
     viewport: { width: 1440, height: 900 },
-    launchOptions: {
-      executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-    },
+    launchOptions: existsSync(CHROME) ? { executablePath: CHROME } : {},
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure'
   },

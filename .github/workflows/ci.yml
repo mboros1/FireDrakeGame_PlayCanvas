@@ -1,0 +1,32 @@
+# Typecheck, build and test on every push and pull request.
+#
+# The browser tests need the drake model, a licensed Fab asset that is never
+# committed, so CI runs the rest: simulation, levels, the room server's
+# report endpoint, and the model-data check (which skips without the asset).
+# Run the full suite locally with `npm run iterate`.
+
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck and build client
+        run: npm run build
+      - name: Build room server
+        run: npm run server:build
+      - name: Headless tests
+        run: npm run test:headless
