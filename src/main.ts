@@ -28,6 +28,7 @@ import { Hud } from './view/hud';
 import { Sound } from './view/audio';
 import { assetUrl } from './assets';
 import { Party } from './party';
+import { startTelemetry } from './telemetry';
 import { isTouchDevice, TouchControls } from './view/touch';
 import { randomRoomCode } from './net/client';
 import { cleanRoom } from './net/protocol';
@@ -157,6 +158,8 @@ let pointerLockRequested = false;
 /** The multiplayer session, when playing together. Null in single player. */
 let party: Party | null = null;
 const SERVER_URL = params.get('server') ?? 'wss://firedrakegame-playcanvas.fly.dev/ws';
+const telemetry = startTelemetry(SERVER_URL, __BUILD_VERSION__, params);
+telemetry.note({ quality, touch });
 /** Automation: when set, the camera eases round to this yaw. Any mouse look cancels it. */
 let cameraYawTarget: number | null = null;
 let trauma = 0;
@@ -215,6 +218,7 @@ function restartChapter() {
 let touchControls: TouchControls | null = null;
 function enableTouch() {
   if (touchControls) return;
+  telemetry.note({ touch: true, touchLate: !touch });
   touchControls = new TouchControls(() => hud.openCover(), {
     mute: () => {
       const muted = sound.toggleMute();
@@ -316,6 +320,7 @@ function buildCave() {
 function buildForest() {
   clearWorld();
   sceneName = 'forest';
+  telemetry.note({ scene: 'forest', together: party !== null });
   lightVillage();
   // Together, the room decides the level; alone, it is the default.
   const layout = getLevel(party?.session.level || undefined);
@@ -808,6 +813,7 @@ app.on('update', (frameDt: number) => {
   if (sceneName === 'cave' && drakePosition.z < -38 && !party) void transitionToForest();
   if (sceneName === 'forest' && rampage.score >= 2100 && !hud.hasEnded) hud.showTheEnd(rampage.score);
 
+  telemetry.frame(frameDt);
   hud.update(frameDt, camera.camera!, rampage.score, rampage.combo, keys.size > 0);
   hud.setStats(sceneName === 'forest'
     ? `${rampage.livingDwarves} dwarves · ${rampage.burningDwarves} alight · best chain ×${rampage.bestCombo}`

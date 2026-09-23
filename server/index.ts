@@ -27,7 +27,66 @@ const HEARTBEAT_MS = 15_000;
 const connectionsByIp = new Map<string, number>();
 const alive = new WeakMap<WebSocket, boolean>();
 
+/** Client reports: small, few, and only ever written to the log. */
+const REPORT_MAX_BYTES = 8192;
+const REPORTS_PER_MINUTE = 30;
+const reportsByIp = new Map<string, { count: number; since: number }>();
+
+const clientIp = (request: import('node:http').IncomingMessage) =>
+  String(request.headers['fly-client-ip'] ?? request.socket.remoteAddress ?? 'unknown');
+
+/**
+ * `POST /report`: an error or a session summary from a player's browser,
+ * logged as one JSON line (`fly logs | grep report`). Sent with
+ * `navigator.sendBeacon` as text/plain, which needs no CORS preflight from
+ * the itch.io frame. Nothing is stored; the log is the record.
+ */
+const receiveReport = (request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse) => {
+  const ip = clientIp(request);
+  const now = Date.now();
+  const bucket = reportsByIp.get(ip);
+  if (bucket && now - bucket.since < 60_000 && bucket.count >= REPORTS_PER_MINUTE) {
+    response.writeHead(429, { 'access-control-allow-origin': '*' }).end();
+    return;
+  }
+  if (!bucket || now - bucket.since >= 60_000) reportsByIp.set(ip, { count: 1, since: now });
+  else bucket.count++;
+
+  let body = '';
+  let tooBig = false;
+  request.setEncoding('utf8');
+  request.on('data', chunk => {
+    body += chunk;
+    if (body.length > REPORT_MAX_BYTES) {
+      tooBig = true;
+      request.destroy();
+    }
+  });
+  request.on('end', () => {
+    if (tooBig) return;
+    let report: unknown;
+    try {
+      report = JSON.parse(body);
+    } catch {
+      response.writeHead(400, { 'access-control-allow-origin': '*' }).end();
+      return;
+    }
+    if (report && typeof report === 'object') {
+      // Keep the log line bounded and flat; never trust client field sizes.
+      const clipped = Object.fromEntries(Object.entries(report as Record<string, unknown>).slice(0, 24)
+        .map(([k, v]) => [k.slice(0, 32), typeof v === 'string' ? v.slice(0, 600) : v]));
+      console.log(`report ${JSON.stringify({ at: new Date().toISOString(), ...clipped })}`);
+    }
+    response.writeHead(204, { 'access-control-allow-origin': '*' }).end();
+  });
+};
+
 const http = createServer((request, response) => {
+  if (request.method === 'POST' && request.url?.startsWith('/report')) return receiveReport(request, response);
+  if (request.method === 'OPTIONS') {
+    response.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type' }).end();
+    return;
+  }
   if (request.url === '/' || request.url?.startsWith('/health')) {
     const players = [...rooms.values()].reduce((sum, room) => sum + room.size, 0);
     response.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
@@ -50,7 +109,7 @@ sockets.on('connection', (socket: WebSocket, request) => {
     return;
   }
   // Fly's proxy puts the real client address in Fly-Client-IP.
-  const ip = String(request.headers['fly-client-ip'] ?? request.socket.remoteAddress ?? 'unknown');
+  const ip = clientIp(request);
   const fromIp = connectionsByIp.get(ip) ?? 0;
   if (fromIp >= MAX_CONNECTIONS_PER_IP || (!rooms.has(roomName) && rooms.size >= MAX_ROOMS)) {
     socket.close(CLOSE_BUSY, 'server busy');
