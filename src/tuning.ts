@@ -65,10 +65,10 @@ export const TUNING = {
     fov: 62,
     // Framed for a 2.2 m creature. These are the most feel-sensitive numbers
     // here and should be adjusted live rather than computed.
-    distance: 8,
+    distance: 9.5,
     minDistance: 4,
     maxDistance: 16,
-    pitchDegrees: 16,
+    pitchDegrees: 19,
     minPitch: -8,
     maxPitch: 52,
     targetHeight: 1.4,

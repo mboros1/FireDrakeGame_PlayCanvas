@@ -255,8 +255,10 @@ export class Rampage {
     const dx = this.at.x - bodyX;
     const dz = this.at.z - bodyZ;
     const distance = Math.hypot(dx, dz);
-    if (distance > DRAKE_RADIUS + .45) return;
     const speed = this.drake.speed;
+    // A charging drake sweeps a wider path: wings out, head low.
+    const reach = DRAKE_RADIUS + (speed > TUNING.drake.walkSpeed + 1 ? 1.1 : .45);
+    if (distance > reach) return;
     if (speed < LAUNCH_MIN_SPEED) {
       // Shoved aside, standing.
       const nx = distance > .001 ? dx / distance : 1;

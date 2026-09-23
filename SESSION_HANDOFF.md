@@ -1,6 +1,6 @@
 # Fire Drake PlayCanvas development handoff
 
-Last updated: 2026-07-25
+Last updated: 2026-09-23
 
 ## Read this first
 
@@ -37,79 +37,117 @@ Excluded from version control and present on disk only: `public/assets/` and
 The worktree contains substantial user work. Do not reset, delete, or regenerate
 it as cleanup.
 
-## Current playable prototype
+## Current playable prototype: the storybook
+
+As of 2026-09-23 the game has a committed art direction: **the drake has
+escaped into a pop-up storybook.** Everything except the drake is cut paper,
+drawn at startup with Canvas2D (no new art assets). The drake is the only
+solid thing in a paper world.
 
 ```sh
 npm install
 npm run dev
 ```
 
-Controls:
+Controls: WASD prowl (camera-relative) · Shift charge · Space breathe fire ·
+click for mouse look (right-drag fallback) · wheel zoom · M mute · R restart
+the chapter · Esc release the mouse.
 
-- WASD or arrow keys: camera-relative movement
-- Shift: charge
-- Click: pointer-lock mouse look
-- Right-drag: mouse-look fallback
-- Mouse wheel: zoom
-- Space: fire breath
-- Escape: release pointer lock
+Flow:
 
-Scenes:
-
-- `/` starts in the procedural lava cave.
-- Reaching the cave gate transitions through a loading overlay to the
-  procedural forest.
-- `/?level=extracted` loads the archived Unreal forest extraction.
-
-The loop includes the exported Fire Drake model and textures, third-person
-follow camera and mouse look, fire-breath particles with cone hit testing,
-forest-only dwarf spawning and wandering, run-plus-flail burning behavior,
-attached fire effects, five-second burn/despawn, and hot module reload that
-preserves scene and player transform.
+- A book-cover title card; any key opens it.
+- **Chapter the First, the Hoard** (`/`): a lava cave with cut-paper rock
+  arches, coin heaps and crystals. Walk into the giant open book at the end.
+- A page turn to **Chapter the Second, Little Kindling** (the scene is still
+  named `forest` internally and in the debug API): a paper village holding a
+  cheese festival. It has cottages, a maypole with bunting, market stalls,
+  haystacks, fences, autumn woods, a pond, and paper hills, clouds and a sun
+  hung on strings.
+- Mayhem: breath burns dwarves and props, and fire spreads. Charging launches
+  dwarves (they cartwheel, bounce and land dizzy) and folds cottages,
+  haystacks, stalls and fences flat. Chains multiply the score. A wax seal
+  shows the score, with tiers from "A Perfectly Pleasant Afternoon" to "The
+  End of the Book".
+- **Deeds**: eleven Goat-Simulator-style goals, three shown at a time. Finish
+  them all, or reach 2100 mayhem, and "The End" page appears with stats.
+- A narrator comments on events in a typewriter strip. Comic lettering
+  (THWACK!, CRUNCH!, FWOOSH!) pops up, dwarves shout in speech bubbles, and
+  burnt-out dwarves float up as small paper ghosts.
+- Procedural Web Audio: breath roar, yelps, boings, paper crumples, fire
+  crackle, and a Dorian music box. There are no audio files.
+- `/?level=extracted` still loads the archived Unreal forest extraction.
 
 ## Architecture (as built today)
 
-- `src/main.ts` — PlayCanvas application, scene construction, drake controller,
-  camera, fire, dwarves, loading transition, extracted-sector loader, and the
-  `window.__FIRE_DRAKE_DEBUG__` automation surface.
-- `src/tuning.ts` — drake scale/orientation/offset, movement and camera feel.
-- `src/style.css` — canvas, HUD, loading presentation.
+- `src/main.ts`: wiring only. It owns the app, input, camera (follow, shake,
+  charge FOV kick, hit-stop), scene loading, the frame loop and
+  `window.__FIRE_DRAKE_DEBUG__`.
+- `src/sim/`: PlayCanvas-free and deterministic (seeded `Rng`, no
+  `Math.random`).
+  - `drake.ts`, `dwarf.ts`: locomotion. Dwarves flee, get launched, bounce
+    and are stunned.
+  - `props.ts`: burnable and flattenable scenery with fire spread.
+  - `village.ts`: seeded level layout. It is sim data because the server
+    needs the colliders.
+  - `rampage.ts`: every multi-entity rule (breath cone, charge, collisions,
+    spread, scoring and combos). It emits a `RampageEvent` queue; the view
+    drains it and never diffs state.
+- `src/view/`: presentation only.
+  - `paper.ts`: canvas-to-texture upload, shared meshes, materials. **Burnable
+    cutouts encode a bottom-up burn order in texture alpha (0.5..1); raising
+    `alphaTest` eats the paper away with no custom shader.** Cached meshes
+    must be `retain()`ed, or PlayCanvas frees them when a scene is torn down.
+  - `art.ts`: all the drawing (dwarves, trees, cottages, hills, flames...).
+  - `stage.ts`: builds both chapters and animates props (burn, char, squash,
+    and fold down like a pop-up flap when blocking the camera).
+  - `puppet.ts`: split-pin paper dwarves, camera-facing with a Paper-Mario
+    flip.
+  - `drake.ts`: model, anim graph, mouth glow.
+  - `fx.ts`: pooled billboard particles plus flickering fire lights.
+  - `post.ts`: CameraFrame (bloom, grading, vignette; SSAO and tilt-shift DOF
+    on high quality).
+  - `hud.ts`, `deeds.ts`, `audio.ts`: HUD, goals, sound.
+- `src/tuning.ts`: drake scale and offsets, movement, and camera feel.
 
-Debug API: `getState()`, `teleport(x, z)`,
+Debug API: `getState()` (now also `mayhem`, `nearestDwarf`, `model.bounds`,
+`effects.burningProps` and `effects.particles`), `teleport(x, z)`,
 `loadScene('cave' | 'forest' | 'forestExtract')`, `resetCamera()`.
 
-**`window.__FIRE_DRAKE_DEBUG__` must survive every refactor.** The Playwright
-suite and the MCP workflow depend on it, and it is the mechanism for verifying
-the forge port against current behavior.
+**`window.__FIRE_DRAKE_DEBUG__` must survive every refactor.**
 
-`src/main.ts` is a 671-line monolith mixing rendering, input, gameplay, scene
-construction, and asset loading. Splitting it is phase 1 of the architecture doc.
+Quality: automated runs (`navigator.webdriver`) default to a cheap pipeline
+without SSAO or DOF. Use `?quality=high` or `?quality=low` to override. It
+holds 60 fps in headless Chrome on Metal with a village on fire.
 
 ## Runtime assets
 
-`public/assets/wyvern/` — `wyvern.glb`, base-color/normal/emissive textures, and
-exported `idle`, `walk`, `take_off`, `flying`, `flapping` GLBs. The model is
-connected; the animation clips are **not** yet wired to a PlayCanvas animation
-state graph, so the drake renders in bind pose.
+`public/assets/wyvern/` holds the wyvern model and textures, plus `idle`,
+`walk`, `take_off`, `flying` and `flapping` GLBs. **Idle and walk are now
+wired** to an anim graph (Walk and Run share the walk clip, speed-scaled). The
+exported clips drive the root bone `spine_004_04` to y ≈ −47,893, an Unreal
+root-motion offset baked into the wrong space; `DrakeView` zeroes that bone's
+translation after the anim system runs. The idle clip has the drake glance
+back over its shoulder, and that is kept on purpose.
 
-`public/assets/forest-sector/` — 20 sanitized GLBs plus `forest-sector.json`.
-
-`assets-source/` — FBX/source artifacts retained for reproducibility.
+`public/assets/forest-sector/` holds the archived extraction (20 GLBs plus
+manifest).
 
 ## Tests and browser automation
 
-- `tests/gameplay.spec.ts` — model readiness and facing alignment, mouse look,
-  camera-relative movement, wheel zoom, fire breath, procedural forest and dwarf
-  spawning, console/page-error gate.
-- `tests/extracted-sector.spec.ts` — extracted object count, source-level
-  identity, load-failure and console-error gate, visual screenshot.
-- `.mcp.json` — headless isolated Playwright MCP at 1440×900.
+42 tests: the original browser suite, sim unit tests, and
+`tests/sim-rampage.spec.ts`. The rampage tests cover breath, fire spread,
+launch, landing, flattening, combos, a deterministic 12-second village replay,
+and layout constraints.
 
 ```sh
-npm run iterate    # tsc --noEmit && vite build && playwright test
+npm run iterate    # both typechecks, vite build, playwright
 ```
 
-Last verified 2026-07-25: build passed, 2 Playwright tests passed, 8.2 s total.
+Last verified 2026-09-23: 42 passed.
+
+For screenshots, the Playwright MCP server can hang if the page spams console
+errors (Vite forwards them). A plain `playwright-core` script with
+`--use-angle=metal` was more reliable.
 
 ## Unreal: reference only
 
@@ -130,23 +168,18 @@ assets already exported. `docs/ARCHITECTURE.md` records the full reasoning.
 
 ## Known problems
 
-Still true and still relevant:
-
-1. **No physics.** Movement is `translate` plus `clamp(-54, 54)`, ground is a
-   hardcoded `y = 0.1`, and hits are distance-and-dot tests. Real collision
-   arrives with forge.
-2. **The drake is enormous** — roughly a 30 m wingspan against a 60 m sector,
-   with the camera effectively inside it. One meter-based scale convention needs
-   settling, then `src/tuning.ts` and camera framing re-tuned.
-3. **The drake is in bind pose.** Animation clips are exported but unconnected.
-4. **No terrain grounding, camera collision, or production physics.**
-5. **`package.json` repeats the Playwright dependency keys.** Normalize during a
-   dedicated dependency pass, not incidentally.
-6. Production JS bundle is ~1.9 MB raw / 488 KiB gzipped before level assets.
-
-Historical, tied to the retired pipeline — recorded so the screenshots make
-sense, not as a work list: sideways and floating foliage, absent landscape,
-category-tint placeholder materials, and one entity per foliage instance.
+1. **No real physics yet.** Collisions are circles in `rampage.ts`, the
+   ground is flat, and launched dwarves are ballistic arcs rather than
+   ragdolls. See the Rapier discussion in the conversation log. The
+   architecture still says forge.
+2. **Only idle and walk clips exist.** There is no breath, pounce or hurt
+   pose. New clips are best authored with headless Blender scripts
+   (`/Applications/Blender.app/Contents/MacOS/Blender -b -P ...`).
+3. Dwarves are small at a distance (1.3 m against a 116 m field). The
+   greeters near the drake's start help.
+4. Google Fonts (IM Fell English) load from the network; offline falls back
+   to Georgia.
+5. The production JS bundle is ~1.9 MB raw before level assets.
 
 ## Next work
 

@@ -1,19 +1,12 @@
-# Fire Drake — PlayCanvas vertical slice
+# Fire Drake: a storybook rampage
 
-> New session: read [`SESSION_HANDOFF.md`](SESSION_HANDOFF.md) before changing
-> the prototype. It records the linked Unreal project, validation state, known
-> visual defects, and the next bounded iteration.
+> New session: read [`SESSION_HANDOFF.md`](SESSION_HANDOFF.md) and
+> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first.
 
-A browser-native prototype of the Fire Drake gameplay loop:
-
-- Controllable drake with follow camera
-- Lava-cave-to-forest loading transition
-- Forest-only dwarf spawning and wandering
-- Fire-breath cone hit testing
-- Running plus upper-body flailing while burning
-- Attached fire effect and five-second burn/despawn
-- Automatic dwarf replenishment
-- Vite hot module replacement with scene/player state preservation
+A slapstick fire drake loose in a pop-up storybook. Everything except the
+drake is cut paper, drawn in code. Burn the village of Little Kindling during
+its cheese festival: toast dwarves, launch them with a charge, fold cottages
+flat, and chase eleven Deeds to reach The End.
 
 ## Run
 
@@ -22,9 +15,10 @@ npm install
 npm run dev
 ```
 
-Open the URL printed by Vite. Use WASD to move, Shift to boost, and Space to
-breathe fire. Fly through the stone gate at the far end of the cave to load the
-forest.
+Open the URL printed by Vite and press any key to open the book. WASD
+prowls, Shift charges (and flattens things), Space breathes fire, M mutes, and
+R restarts the chapter. Walk into the giant open book at the end of the cave to
+turn to Chapter the Second.
 
 ## Code-first iteration
 

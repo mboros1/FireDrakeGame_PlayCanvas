@@ -9,6 +9,7 @@
 import * as pc from 'playcanvas';
 import type { RampageEvent } from '../sim/rampage';
 import { PropKind } from '../sim/props';
+import { Deeds } from './deeds';
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
@@ -108,6 +109,10 @@ export class Hud {
   private readonly loading = $<HTMLDivElement>('#loading');
   private readonly controls = $<HTMLDivElement>('.controls');
 
+  readonly deeds = new Deeds($<HTMLElement>('#deeds'));
+  private readonly deedsCount = $<HTMLSpanElement>('#deeds-count');
+  private readonly theEnd = $<HTMLDivElement>('#the-end');
+  private ended = false;
   private readonly pops: Pop[] = [];
   private shownScore = 0;
   private tierIndex = 0;
@@ -143,6 +148,35 @@ export class Hud {
 
   setMayhemVisible(visible: boolean) {
     this.mayhem.classList.toggle('hidden', !visible);
+    this.deeds.setVisible(visible);
+  }
+
+  /** New chapter: fresh deeds, fresh score, the end un-ended. */
+  resetRun() {
+    this.deeds.reset();
+    this.ended = false;
+    this.theEnd.classList.remove('visible');
+    this.shownScore = 0;
+    this.tierIndex = 0;
+  }
+
+  get hasEnded() {
+    return this.ended;
+  }
+
+  showTheEnd(score: number) {
+    if (this.ended) return;
+    this.ended = true;
+    const t = this.deeds.tally;
+    $('#end-score').textContent = String(score);
+    $('#end-tier').textContent = this.tier.textContent ?? '';
+    $('#end-toasted').textContent = String(t.ignited);
+    $('#end-flown').textContent = String(t.launched);
+    $('#end-cottages').textContent = String(t.burnedCottages + t.flattenedCottages);
+    $('#end-chain').textContent = `×${t.bestCombo}`;
+    this.theEnd.classList.add('visible');
+    // The last page lingers, then politely gets out of the way.
+    setTimeout(() => this.theEnd.classList.remove('visible'), 9000);
   }
 
   setStats(text: string) {
@@ -168,7 +202,7 @@ export class Hud {
   }
 
   /** Comic lettering at a world position: WHOOSH, BONK, CRUNCH. */
-  pop(text: string, world: pc.Vec3, style: 'sfx' | 'shout' | 'points' | 'combo' = 'sfx', life = 1.1) {
+  pop(text: string, world: pc.Vec3, style: 'sfx' | 'shout' | 'points' | 'combo' | 'deed' = 'sfx', life = 1.1) {
     const el = document.createElement('div');
     el.className = `pop pop-${style}`;
     el.textContent = text;
@@ -182,6 +216,7 @@ export class Hud {
   }
 
   handle(event: RampageEvent, at: pc.Vec3) {
+    this.deeds.handle(event);
     switch (event.type) {
       case 'dwarfIgnited':
         this.pop(pick(SHOUTS), at.clone().add(new pc.Vec3(0, 1.7, 0)), 'shout', 1.4);
@@ -260,6 +295,7 @@ export class Hud {
       this.tier.textContent = TIERS[tierIndex][1];
     }
     this.combo.textContent = combo >= 2 ? `×${combo} chain` : '';
+    this.deedsCount.textContent = `${this.deeds.total - this.deeds.remaining} of ${this.deeds.total}`;
     this.combo.classList.toggle('hot', combo >= 5);
 
     // Narrator typewriter.

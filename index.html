@@ -26,6 +26,10 @@
         <div id="combo" class="combo"></div>
       </aside>
 
+      <section id="deeds" class="deeds hidden">
+        <div class="deeds-title">Deeds <span id="deeds-count"></span></div>
+      </section>
+
       <div id="narrator" class="narrator"><span></span></div>
 
       <div class="controls">
@@ -34,7 +38,7 @@
         <div><kbd>Shift</kbd> charge &amp; flatten</div>
         <div><kbd>Space</kbd> breathe fire</div>
         <div><kbd>Click</kbd> mouse look · <kbd>Wheel</kbd> zoom</div>
-        <div><kbd>M</kbd> hush the minstrel</div>
+        <div><kbd>M</kbd> hush the minstrel · <kbd>R</kbd> start the chapter over</div>
       </div>
 
       <div id="stats"></div>
@@ -50,6 +54,23 @@
         <div class="cover-sub">being a True &amp; Regrettable Account<br />of the Burning of Little Kindling</div>
         <div class="cover-rule"></div>
         <div class="cover-prompt">press any key to open the book</div>
+      </div>
+    </div>
+
+    <div id="the-end">
+      <div class="end-page">
+        <div class="end-ornament">❦</div>
+        <h2>The End</h2>
+        <div class="end-sub">of Little Kindling, and of this particular book.</div>
+        <dl class="end-stats">
+          <dt>Mayhem</dt><dd id="end-score">0</dd>
+          <dt>Verdict</dt><dd id="end-tier"></dd>
+          <dt>Dwarves toasted</dt><dd id="end-toasted">0</dd>
+          <dt>Dwarves airborne</dt><dd id="end-flown">0</dd>
+          <dt>Cottages undone</dt><dd id="end-cottages">0</dd>
+          <dt>Longest chain</dt><dd id="end-chain">0</dd>
+        </dl>
+        <div class="end-prompt">press <kbd>R</kbd> to read it again · or keep burning, the book will wait</div>
       </div>
     </div>
 

@@ -1063,3 +1063,59 @@ export const drawGarland = () => withMargin(256, 128, 4, ctx => {
     blobPath(ctx, 26 + i * 15, 60 + r() * 24, 11, 11, r, 5, 3, 1); ctx.fill();
   }
 });
+
+/**
+ * A cut-paper rock arch: a sheet with a ragged tunnel cut out of it. Stacked
+ * along the lava river they make the cave a paper theatre of receding layers.
+ * 1024×640.
+ */
+export const drawCaveArch = (fill: string, rim: string, seed: number) => {
+  const { canvas, ctx } = makeCanvas(1024, 640);
+  const r = artRng(seed);
+  // Outer silhouette: ragged top edge.
+  const outer: [number, number][] = [[0, 640]];
+  for (let x = 0; x <= 1024; x += 40) outer.push([x, 20 + r() * 70 + Math.abs(x - 512) * .05]);
+  outer.push([1024, 640]);
+  ctx.fillStyle = fill;
+  scissorPath(ctx, outer, 6, r, 20);
+  ctx.fill();
+  // Stalactite teeth around the opening.
+  const opening: [number, number][] = [];
+  const cx = 512 + (r() - .5) * 60;
+  const halfWidth = 300 + r() * 60;
+  const top = 150 + r() * 50;
+  for (let i = 0; i <= 40; i++) {
+    const t = i / 40;
+    const a = Math.PI + t * Math.PI;
+    const tooth = i % 3 === 0 ? 30 + r() * 50 : 0;
+    opening.push([cx + Math.cos(a) * halfWidth, 640 - (640 - top) * Math.sin(t * Math.PI) + tooth * Math.sin(t * Math.PI)]);
+  }
+  opening.push([cx + halfWidth, 640]);
+  opening.push([cx - halfWidth, 640]);
+  ctx.globalCompositeOperation = 'destination-out';
+  scissorPath(ctx, opening, 5, r, 14);
+  ctx.fill();
+  ctx.globalCompositeOperation = 'source-atop';
+  // Lava-lit inner rim.
+  ctx.strokeStyle = rim;
+  ctx.lineWidth = 18;
+  scissorPath(ctx, opening, 5, r, 14);
+  ctx.stroke();
+  // Strata and a few crystals.
+  ctx.strokeStyle = 'rgba(0,0,0,.18)';
+  ctx.lineWidth = 4;
+  for (let i = 0; i < 9; i++) {
+    const y = 90 + i * 60 + r() * 20;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.bezierCurveTo(300, y + 30, 700, y - 30, 1024, y + 10); ctx.stroke();
+  }
+  for (let i = 0; i < 7; i++) {
+    const x = r() < .5 ? r() * 180 + 20 : 1004 - r() * 180;
+    const y = 250 + r() * 330;
+    ctx.fillStyle = i % 2 ? '#6fd1c9' : '#b58ae0';
+    scissorPath(ctx, [[x, y], [x + 10, y - 40 - r() * 30], [x + 22, y]], 2, r);
+    ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  grainOver(ctx, 1024, 640, .12, seed);
+  return canvas;
+};

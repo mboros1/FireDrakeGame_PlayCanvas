@@ -115,6 +115,11 @@ app.root.addChild(fill);
 const fx = new Fx(world, quality === 'high' ? 8 : 4);
 const hud = new Hud();
 const sound = new Sound();
+hud.deeds.onComplete = (deed, remaining) => {
+  sound.fanfare();
+  hud.pop(`✗ ${deed}`, scratch.copy(drake.root.getPosition()).add(new pc.Vec3(0, 3.6, 0)), 'deed', 2.2);
+  if (remaining === 0) setTimeout(() => hud.showTheEnd(rampage.score), 2200);
+};
 const drake = new DrakeView(app, drakeSim, world);
 let stage = new Stage(world);
 const puppets = new Map<number, Puppet>();
@@ -159,6 +164,10 @@ window.addEventListener('keydown', event => {
   if (event.code === 'KeyM' && !event.repeat) {
     const muted = sound.toggleMute();
     hud.pop(muted ? 'shh.' : '♪', scratch.copy(drake.root.getPosition()).add(new pc.Vec3(0, 3, 0)), 'shout', 1);
+  }
+  if (event.code === 'KeyR' && !event.repeat && sceneName === 'forest' && !transitioning) {
+    sound.pageTurn();
+    buildForest();
   }
   keys.add(event.code);
 });
@@ -221,13 +230,13 @@ function lightVillage() {
 
 function lightCave() {
   camera.camera!.clearColor = new pc.Color(.07, .03, .05);
-  app.scene.ambientLight = new pc.Color(.2, .1, .14);
+  app.scene.ambientLight = new pc.Color(.34, .2, .26);
   app.scene.fog.type = pc.FOG_LINEAR;
   app.scene.fog.color = new pc.Color(.13, .05, .08);
-  app.scene.fog.start = 25;
-  app.scene.fog.end = 110;
-  sun.light!.color = new pc.Color(.85, .55, .75);
-  sun.light!.intensity = .55;
+  app.scene.fog.start = 30;
+  app.scene.fog.end = 130;
+  sun.light!.color = new pc.Color(.9, .6, .8);
+  sun.light!.intensity = .8;
   sun.setEulerAngles(62, 30, 0);
   fill.light!.intensity = .12;
   post.apply(GRADES.cave);
@@ -254,6 +263,7 @@ function buildForest() {
   stage.buildVillage(layout, rampage.props);
   drakeSim.place(simWorld, layout.drakeStart.x, layout.drakeStart.z, layout.drakeStart.yaw);
   hud.setChapter('Chapter the Second', 'In Which Little Kindling Has a Very Bad Day');
+  hud.resetRun();
   hud.setMayhemVisible(true);
   hud.narrate('village', true);
 }
@@ -432,6 +442,17 @@ window.__FIRE_DRAKE_DEBUG__ = {
         particles: fx.count
       },
       mayhem: { score: rampage.score, combo: rampage.combo, bestCombo: rampage.bestCombo },
+      nearestDwarf: (() => {
+        const t = { x: 0, y: 0, z: 0, yaw: 0 };
+        let best: { x: number; z: number } | null = null;
+        let bestDistance = Infinity;
+        for (const d of rampage.dwarves) {
+          if (d.dead || !simWorld.state.transform(d.id, t)) continue;
+          const distance = Math.hypot(t.x - drakePosition.x, t.z - drakePosition.z);
+          if (distance < bestDistance) { bestDistance = distance; best = { x: t.x, z: t.z }; }
+        }
+        return best;
+      })(),
       extracted: { objects: extractedObjects, sourceLevel: extractedSourceLevel, loadError: extractedLoadError }
     };
   },
@@ -504,7 +525,7 @@ app.on('update', (frameDt: number) => {
   for (const event of events) handleEvent(event);
   events.length = 0;
 
-  const fires = stage.update(dt, elapsed, fx);
+  const fires = stage.update(dt, elapsed, fx, camera.getPosition(), drake.root.getPosition());
   for (const dwarf of rampage.dwarves) {
     if (dwarf.burning && puppets.has(dwarf.id)) fires.push({ position: puppets.get(dwarf.id)!.root.getPosition(), strength: .5 });
   }
@@ -542,6 +563,7 @@ app.on('update', (frameDt: number) => {
   post.focusAt(camera.getPosition().distance(drakePosition));
 
   if (sceneName === 'cave' && drakePosition.z < -38) void transitionToForest();
+  if (sceneName === 'forest' && rampage.score >= 2100 && !hud.hasEnded) hud.showTheEnd(rampage.score);
 
   hud.update(frameDt, camera.camera!, rampage.score, rampage.combo, keys.size > 0);
   hud.setStats(sceneName === 'forest'

@@ -8,6 +8,7 @@ import * as pc from 'playcanvas';
 import {
   COTTAGE_STYLES,
   drawBookGate,
+  drawCaveArch,
   drawCaveGround,
   drawCaveWall,
   drawCloud,
@@ -105,6 +106,10 @@ class PropView {
   private swapped = false;
   private readonly scratch = new pc.Vec3();
   private tilt = 0;
+  /** 0 standing, 1 folded flat away from the camera like a pop-up flap. */
+  private fold = 0;
+  private foldTarget = 0;
+  private foldYaw = 0;
 
   constructor(
     readonly sim: PropSim,
@@ -143,6 +148,27 @@ class PropView {
 
   get firePosition() {
     return this.root.getPosition();
+  }
+
+  /**
+   * Fold flat if this prop stands between the camera and the drake, the way a
+   * pop-up page's flaps lie down as the book closes. Cottages are too big to
+   * fold convincingly, and the maypole is the centrepiece; both stay up.
+   */
+  occlusion(cameraX: number, cameraZ: number, targetX: number, targetZ: number, halfWidth: number) {
+    if (this.sim.kind === PropKind.Cottage || this.sim.kind === PropKind.Maypole) return;
+    const dx = targetX - cameraX;
+    const dz = targetZ - cameraZ;
+    const lengthSq = dx * dx + dz * dz;
+    const t = ((this.sim.x - cameraX) * dx + (this.sim.z - cameraZ) * dz) / Math.max(lengthSq, 1e-4);
+    let occluding = false;
+    if (t > -.15 && t < .9) {
+      const px = cameraX + dx * t - this.sim.x;
+      const pz = cameraZ + dz * t - this.sim.z;
+      occluding = px * px + pz * pz < halfWidth * halfWidth;
+    }
+    this.foldTarget = occluding ? 1 : 0;
+    if (occluding) this.foldYaw = Math.atan2(dx, dz) * pc.math.RAD_TO_DEG;
   }
 
   update(dt: number, elapsed: number, fx: Fx) {
@@ -211,13 +237,24 @@ class PropView {
       }
     }
 
-    const scale = this.root.getLocalScale();
+    this.fold += (this.foldTarget - this.fold) * Math.min(1, dt * (this.foldTarget ? 9 : 4));
     const inner = this.root.children[0];
     if (inner) {
       inner.setLocalScale(1 + (1 - this.squash) * .12, this.squash, 1 + (1 - this.squash) * .12);
-      inner.setLocalEulerAngles(this.tilt, 0, this.tilt * .5);
+      if (this.fold > .002) {
+        // Hinge at the base, falling away along the camera's view direction,
+        // expressed in the prop's own frame.
+        const eased = this.fold * this.fold * (3 - 2 * this.fold);
+        const rootYaw = this.root.getLocalEulerAngles().y;
+        const q = new pc.Quat().setFromEulerAngles(0, this.foldYaw - rootYaw, 0)
+          .mul(new pc.Quat().setFromEulerAngles(eased * 84, 0, 0))
+          .mul(new pc.Quat().setFromEulerAngles(0, rootYaw - this.foldYaw, 0))
+          .mul(new pc.Quat().setFromEulerAngles(this.tilt, 0, this.tilt * .5));
+        inner.setLocalRotation(q);
+      } else {
+        inner.setLocalEulerAngles(this.tilt, 0, this.tilt * .5);
+      }
     }
-    void scale;
   }
 
   get burning() {
@@ -522,7 +559,7 @@ export class Stage {
       m.diffuse = new pc.Color(.1, .02, .01);
       m.emissiveMap = tex;
       m.emissive = pc.Color.WHITE;
-      m.emissiveIntensity = 1.15;
+      m.emissiveIntensity = .78;
       m.emissiveMapTiling = new pc.Vec2(1, 8);
       m.useFog = false;
       m.update();
@@ -535,9 +572,9 @@ export class Stage {
     root.addChild(lava);
 
     // Glow along the lava.
-    for (let z = -50; z <= 50; z += 20) {
+    for (let z = -50; z <= 50; z += 12) {
       const light = new pc.Entity('Lava glow');
-      light.addComponent('light', { type: 'omni', color: new pc.Color(1, .38, .1), intensity: 5, range: 18, castShadows: false });
+      light.addComponent('light', { type: 'omni', color: new pc.Color(1, .42, .14), intensity: 4, range: 22, castShadows: false });
       light.setLocalPosition(0, 1.4, z);
       root.addChild(light);
     }
@@ -553,6 +590,21 @@ export class Stage {
       const material = i === 0 ? cutoutMaterial(texture, .2) : paintMaterial(texture, true);
       meshEntity(`Cave wall ${i}`, ringMesh(radius, height, 48, 4 + i), material, root, { castShadows: false, receiveShadows: i === 0 });
     });
+    // The tunnel: cut-paper arches over the river, receding into the dark.
+    const arches: [number, string, string][] = [
+      [34, '#6b3a36', '#ff9a4a'],
+      [18, '#5a2d38', '#ff8440'],
+      [2, '#4a2536', '#f06a3a'],
+      [-14, '#3c1f33', '#d85434'],
+      [-30, '#301a2e', '#b8442e']
+    ];
+    arches.forEach(([z, fill, rim], i) => {
+      const material = once(`mat:arch${i}`, () => cutoutMaterial(canvasTexture(drawCaveArch(fill, rim, 60 + i)), .5));
+      const arch = meshEntity('Cave arch', quadMesh(), material, root, { castShadows: false, receiveShadows: true });
+      arch.setLocalScale(44, 27, 1);
+      arch.setLocalPosition((i % 2 ? -1 : 1) * 1.5, -.2, z);
+    });
+
     const stalactiteTexture = once('stalactites', () => canvasTexture(drawStalactites('#2c1a2c', 31)));
     const stalactites = meshEntity('Stalactites', ringMesh(48, 14, 48, 6, 18), paintMaterial(stalactiteTexture, true), root, { castShadows: false, receiveShadows: false });
     stalactites.setLocalScale(1, -1, 1);
@@ -619,7 +671,10 @@ export class Stage {
     void dome;
   }
 
-  update(dt: number, elapsed: number, fx: Fx) {
+  update(dt: number, elapsed: number, fx: Fx, camera?: pc.Vec3, target?: pc.Vec3) {
+    if (camera && target) {
+      for (const prop of this.props) prop.occlusion(camera.x, camera.z, target.x, target.z, prop.sim.kind === PropKind.Tree ? 1.9 * prop.sim.size : 1.4);
+    }
     for (const b of this.bobbers) {
       b.entity.setLocalPosition(b.base.x, b.base.y + Math.sin(elapsed * .5 + b.phase) * b.amount, b.base.z);
     }
@@ -629,7 +684,7 @@ export class Stage {
     }
     if (this.lava) {
       this.lava.emissiveMapOffset = new pc.Vec2(0, (elapsed * .04) % 1);
-      this.lava.emissiveIntensity = 1.1 + Math.sin(elapsed * 1.7) * .15;
+      this.lava.emissiveIntensity = .75 + Math.sin(elapsed * 1.7) * .1;
       this.lava.update();
     }
     if (this.gateGlow) {
