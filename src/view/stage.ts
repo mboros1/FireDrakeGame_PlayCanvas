@@ -69,6 +69,32 @@ const GABLE_FRACTION = COTTAGE_ROOF / (COTTAGE_WALL + COTTAGE_ROOF);
 
 const TREE_STYLES: TreeStyle[] = ['lollipop', 'pine', 'cloud', 'poplar'];
 
+/**
+ * The painted ground depends on a level's paths and pond, which the desk
+ * edits constantly. Keyed by content, and only the most recent few are kept:
+ * each is a 2048² texture, 16 MB of GPU memory.
+ */
+const grounds = new Map<string, pc.Texture>();
+const GROUNDS_KEPT = 3;
+const groundTexture = (level: Pick<LevelDefinition, 'paths' | 'pond'>) => {
+  const key = JSON.stringify([level.paths, level.pond]);
+  let texture = grounds.get(key);
+  if (texture) {
+    // Refresh recency.
+    grounds.delete(key);
+    grounds.set(key, texture);
+    return texture;
+  }
+  texture = canvasTexture(drawVillageGround(level.paths, level.pond), { softAlpha: true });
+  grounds.set(key, texture);
+  while (grounds.size > GROUNDS_KEPT) {
+    const [oldKey, old] = grounds.entries().next().value!;
+    grounds.delete(oldKey);
+    old.destroy();
+  }
+  return texture;
+};
+
 const treeMaterial = (variant: number) => {
   const style = TREE_STYLES[variant % TREE_STYLES.length];
   // Pines stay green; everything else takes autumn.
@@ -295,10 +321,18 @@ export class Stage {
     this.buildSky([[0, '#f6b489'], [.18, '#f7cfa4'], [.45, '#b9d3d0'], [1, '#6f9fbf']], 0);
 
     // Stage floor, then the table beyond it.
-    const groundTexture = once(`ground:${layout.id}`, () => canvasTexture(drawVillageGround(layout.paths, layout.pond), { softAlpha: true }));
     const ground = new pc.Entity('Village ground');
     ground.addComponent('render', { type: 'plane', castShadows: false, receiveShadows: true });
-    ground.render!.material = once('mat:ground', () => cardMaterial(groundTexture, .05, false));
+    // One material, its map swapped per level: materials are not freed with
+    // their textures, and the desk makes many grounds.
+    const groundMaterial = once('mat:ground', () => cardMaterial(groundTexture(layout), .05, false));
+    const painted = groundTexture(layout);
+    if (groundMaterial.diffuseMap !== painted) {
+      groundMaterial.diffuseMap = painted;
+      groundMaterial.emissiveMap = painted;
+      groundMaterial.update();
+    }
+    ground.render!.material = groundMaterial;
     ground.setLocalScale(116, 1, 116);
     root.addChild(ground);
 
@@ -747,7 +781,7 @@ const drawHoard = () => {
  */
 export async function prewarmVillage(layout: LevelDefinition) {
   const yieldToFrame = () => new Promise(resolve => setTimeout(resolve, 0));
-  once(`ground:${layout.id}`, () => canvasTexture(drawVillageGround(layout.paths, layout.pond), { softAlpha: true }));
+  groundTexture(layout);
   await yieldToFrame();
   const seen = new Set<number>();
   for (const p of layout.props) {

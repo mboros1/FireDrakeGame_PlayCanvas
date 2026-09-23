@@ -88,6 +88,32 @@ server and validated at startup; the server names a room's level in
 `npm run levels:export` rewrites `little-kindling.json` from it. This is the
 foundation for the level editor and for levels stored on the server.
 
+## Writing chapters: the author's desk
+
+`src/editor/desk.ts` and `src/editor/drafts.ts`. Open it from the cover's
+"write a chapter of your own" link, with `?desk=1`, or with
+`loadScene('desk')`. Desktop only (hidden on touch).
+
+- The draft is drawn exactly as it plays, seen from above. The paper tray
+  has tools for select (1), the seven cutouts (2–8), path (P), pond (O),
+  bookmark (K) and erase (X). Selected cutouts: drag to move, Q/E turn (with
+  Shift, 5°), −/+ size, V design, Del remove; Shift+wheel turns, Alt+wheel
+  resizes. WASD pans, right-drag orbits, wheel zooms. ⌘Z / ⇧⌘Z undo and redo.
+- Every edit goes through `commit()`: snapshot for undo, validate (problems
+  become margin notes in the narrator's voice), autosave to localStorage
+  (`fire-drake:chapter-drafts`, up to 24 drafts), redraw. Drags move the
+  cutout live and commit on release.
+- "Read this page" plays the draft (R restarts the draft); **B** or the gold
+  banner returns to the desk with the same view and undo history.
+- Export and import `.chapter.json`: the level file format, one prop per
+  line.
+- Next: chapter details (the "In Which…" heading, mood presets for golden
+  afternoon, moonlit night and first snow, narration lines, Deeds
+  templates), then binding chapters to the server with chapter codes.
+
+The painted ground used to be mirrored front to back (the paths and pond
+were drawn at −z's mirror image); the desk exposed it, and it is fixed.
+
 ## Architecture (as built today)
 
 - `src/main.ts`: composition, chapter switching and the frame loop (~440
@@ -243,7 +269,7 @@ and layout constraints.
 npm run iterate    # both typechecks, vite build, playwright
 ```
 
-Last verified 2026-09-23: 56 passed locally. CI (`.github/workflows/ci.yml`)
+Last verified 2026-09-23: 57 passed locally (including the desk). CI (`.github/workflows/ci.yml`)
 runs the typechecks, both builds and `npm run test:headless` (50 tests
 needing no drake asset) on every push.
 

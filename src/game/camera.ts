@@ -18,6 +18,17 @@ export class CameraRig {
   /** Automation: when set, the yaw eases toward it. Any real look cancels it. */
   yawTarget: number | null = null;
 
+  /**
+   * Orbit limits. Play uses the tuning values; the desk pulls further back
+   * and looks further down on the page.
+   */
+  limits = {
+    minDistance: TUNING.camera.minDistance as number,
+    maxDistance: TUNING.camera.maxDistance as number,
+    minPitch: TUNING.camera.minPitch as number,
+    maxPitch: TUNING.camera.maxPitch as number
+  };
+
   private trauma = 0;
   private fovKick = 0;
   private readonly position = new pc.Vec3();
@@ -33,11 +44,11 @@ export class CameraRig {
     if (dyaw === 0 && dpitch === 0) return;
     this.yawTarget = null;
     this.yaw += dyaw;
-    this.pitch = pc.math.clamp(this.pitch + dpitch, TUNING.camera.minPitch, TUNING.camera.maxPitch);
+    this.pitch = pc.math.clamp(this.pitch + dpitch, this.limits.minPitch, this.limits.maxPitch);
   }
 
   zoom(delta: number) {
-    this.targetDistance = pc.math.clamp(this.targetDistance + delta, TUNING.camera.minDistance, TUNING.camera.maxDistance);
+    this.targetDistance = pc.math.clamp(this.targetDistance + delta, this.limits.minDistance, this.limits.maxDistance);
   }
 
   /** Add screen shake, 0..1. It decays on its own. */

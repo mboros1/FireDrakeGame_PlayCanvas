@@ -657,6 +657,9 @@ export const drawVillageGround = (paths: [number, number][][], pond: [number, nu
   const { canvas, ctx } = makeCanvas(size, size);
   const r = artRng(404);
   const toPx = (m: number) => (m / 116 + .5) * size;
+  // World +z is the bottom of the painted sheet as it lies on the ground
+  // plane; without this the paths and pond are painted mirrored front to back.
+  const toPy = (m: number) => (-m / 116 + .5) * size;
   ctx.fillStyle = '#7fa06a';
   ctx.fillRect(0, 0, size, size);
   // Patchwork fields.
@@ -707,7 +710,7 @@ export const drawVillageGround = (paths: [number, number][][], pond: [number, nu
       ctx.beginPath();
       path.forEach(([x, z], i) => {
         const px = toPx(x) + (r() - .5) * 6;
-        const py = toPx(z) + (r() - .5) * 6;
+        const py = toPy(z) + (r() - .5) * 6;
         if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
       });
       ctx.stroke();
@@ -715,12 +718,12 @@ export const drawVillageGround = (paths: [number, number][][], pond: [number, nu
     ctx.fillStyle = 'rgba(140,110,70,.35)';
     for (const [x, z] of path) {
       for (let i = 0; i < 6; i++) {
-        blobPath(ctx, toPx(x) + (r() - .5) * 40, toPx(z) + (r() - .5) * 40, 5, 4, r, 0, 0, 1);
+        blobPath(ctx, toPx(x) + (r() - .5) * 40, toPy(z) + (r() - .5) * 40, 5, 4, r, 0, 0, 1);
         ctx.fill();
       }
     }
   }
-  if (pond) drawPond(ctx, pond, toPx, size, r);
+  if (pond) drawPond(ctx, pond, toPx, toPy, size, r);
   grainOver(ctx, size, size, .1, 12);
   return canvas;
 };
@@ -1102,24 +1105,64 @@ export const drawCaveArch = (fill: string, rim: string, seed: number) => {
 };
 
 /** A pond with ripples and lily pads, on the village ground sheet. */
-const drawPond = (ctx: CanvasRenderingContext2D, pond: [number, number, number], toPx: (m: number) => number, size: number, r: () => number) => {
+const drawPond = (ctx: CanvasRenderingContext2D, pond: [number, number, number], toPx: (m: number) => number, toPy: (m: number) => number, size: number, r: () => number) => {
   const [px, pz, pr] = pond;
   ctx.fillStyle = '#4f8a9a';
-  blobPath(ctx, toPx(px), toPx(pz), pr / 116 * size + 14, pr / 116 * size * .8 + 14, r, 7, 8, 5); ctx.fill();
+  blobPath(ctx, toPx(px), toPy(pz), pr / 116 * size + 14, pr / 116 * size * .8 + 14, r, 7, 8, 5); ctx.fill();
   ctx.fillStyle = '#6fb0bd';
-  blobPath(ctx, toPx(px), toPx(pz), pr / 116 * size, pr / 116 * size * .8, r, 7, 8, 5); ctx.fill();
+  blobPath(ctx, toPx(px), toPy(pz), pr / 116 * size, pr / 116 * size * .8, r, 7, 8, 5); ctx.fill();
   ctx.strokeStyle = 'rgba(255,255,255,.6)';
   ctx.lineWidth = 4;
   for (let i = 0; i < 7; i++) {
     const x = toPx(px) + (r() - .5) * pr * 20;
-    const y = toPx(pz) + (r() - .5) * pr * 12;
+    const y = toPy(pz) + (r() - .5) * pr * 12;
     ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 30, y); ctx.stroke();
   }
   // Lily pads.
   for (let i = 0; i < 9; i++) {
     ctx.fillStyle = PALETTE.moss;
     const x = toPx(px) + (r() - .5) * pr * 22;
-    const y = toPx(pz) + (r() - .5) * pr * 14;
+    const y = toPy(pz) + (r() - .5) * pr * 14;
     ctx.beginPath(); ctx.arc(x, y, 12, .4, Math.PI * 2); ctx.lineTo(x, y); ctx.fill();
   }
+};
+
+/** Selection ring for the desk: a dashed ink circle, 256². */
+export const drawSelectionRing = (colour: string) => {
+  const { canvas, ctx } = makeCanvas(256, 256);
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = 10;
+  ctx.setLineDash([22, 14]);
+  ctx.beginPath();
+  ctx.arc(128, 128, 112, 0, Math.PI * 2);
+  ctx.stroke();
+  return canvas;
+};
+
+/** A ribbon bookmark, numbered: where a seat's drake enters. 128×256. */
+export const drawBookmark = (seat: number) => withMargin(128, 256, 5, ctx => {
+  const colours = [PALETTE.berry, PALETTE.teal, PALETTE.mustard, PALETTE.plum];
+  ctx.fillStyle = colours[seat % colours.length];
+  ctx.beginPath();
+  ctx.moveTo(24, 10);
+  ctx.lineTo(104, 10);
+  ctx.lineTo(104, 240);
+  ctx.lineTo(64, 196);
+  ctx.lineTo(24, 240);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = PALETTE.paper;
+  ctx.font = '700 64px "IM Fell English SC", Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(String(seat + 1), 64, 108);
+});
+
+/** A quill dot for the path being drawn. 64². */
+export const drawQuillDot = () => {
+  const { canvas, ctx } = makeCanvas(64, 64);
+  ctx.fillStyle = '#6b4330';
+  ctx.beginPath();
+  ctx.arc(32, 32, 26, 0, Math.PI * 2);
+  ctx.fill();
+  return canvas;
 };

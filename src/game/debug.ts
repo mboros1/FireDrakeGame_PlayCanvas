@@ -20,7 +20,7 @@ import type { CameraRig } from './camera';
 import type { Controls } from './input';
 import type { ExtractedSector } from './extracted';
 
-export type SceneName = 'cave' | 'forest' | 'forestExtract';
+export type SceneName = 'cave' | 'forest' | 'forestExtract' | 'desk';
 type TargetKind = 'dwarf' | 'cottage' | 'haystack' | 'stall' | 'maypole' | 'tree' | 'fence';
 
 declare global {
@@ -54,6 +54,7 @@ export type DebugContext = {
   rig: CameraRig;
   controls: Controls;
   fx: Fx;
+  desk: () => { state: () => object; exportText: () => string } | null;
 };
 
 const TARGET_KINDS: Record<Exclude<TargetKind, 'dwarf'>, PropKind> = {
@@ -123,7 +124,8 @@ export function installDebugApi(ctx: DebugContext) {
           lastCorrection: party.lastCorrection
         } : null,
         nearestDwarf: nearest('dwarf', true),
-        extracted: { ...ctx.extracted() }
+        extracted: { ...ctx.extracted() },
+        desk: ctx.desk()?.state() ?? null
       };
     },
     teleport: (x, z) => {

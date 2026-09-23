@@ -16,6 +16,10 @@ export class Controls {
   /** Set on the first left click: the tests read it through the debug API. */
   pointerLockRequested = false;
   touch: TouchControls | null = null;
+  /** Off at the desk, where a left click places cutouts instead of locking the mouse. */
+  pointerLockEnabled = true;
+  /** Claim wheel events before they zoom: the desk turns and sizes cutouts with them. */
+  wheelOverride: ((event: WheelEvent) => boolean) | null = null;
   private readonly input: Input = { forward: 0, right: 0, charging: false, breathing: false, cameraYaw: 0 };
 
   constructor(
@@ -35,7 +39,7 @@ export class Controls {
 
     canvas.addEventListener('pointerdown', event => {
       // Pointer lock is a mouse idea; fingers look with the right thumb.
-      if (event.button !== 0 || event.pointerType === 'touch') return;
+      if (event.button !== 0 || event.pointerType === 'touch' || !this.pointerLockEnabled) return;
       this.pointerLockRequested = true;
       void canvas.requestPointerLock()?.catch(error => {
         console.debug('Pointer lock unavailable; right-drag look remains active.', error);
@@ -47,7 +51,10 @@ export class Controls {
       if (!isPointerLook && !isRightDrag) return;
       rig.look(-event.movementX * TUNING.camera.mouseSensitivity, event.movementY * TUNING.camera.mouseSensitivity);
     });
-    window.addEventListener('wheel', event => rig.zoom(Math.sign(event.deltaY) * TUNING.camera.zoomStep), { passive: true });
+    window.addEventListener('wheel', event => {
+      if (this.wheelOverride?.(event)) return;
+      rig.zoom(Math.sign(event.deltaY) * TUNING.camera.zoomStep * (rig.limits.maxDistance > 30 ? 4 : 1));
+    }, { passive: true });
   }
 
   get pointerLocked() {

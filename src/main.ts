@@ -35,6 +35,8 @@ import { Lighting } from './game/lighting';
 import { EventPresenter } from './game/presenter';
 import { loadExtractedSector, type ExtractedSector } from './game/extracted';
 import { installDebugApi, type SceneName } from './game/debug';
+import { Desk } from './editor/desk';
+import type { LevelDefinition } from './sim/level';
 
 type SavedState = { scene: SceneName; x: number; z: number; yaw: number };
 
@@ -93,6 +95,16 @@ let elapsed = 0;
 /** The multiplayer session, when playing together. Null in single player. */
 let party: Party | null = null;
 const extracted: ExtractedSector = { objects: 0, sourceLevel: null, loadError: null };
+/** The level chapter two plays alone: the default, or a draft being read. */
+let currentLevel: LevelDefinition = getLevel();
+/** True while reading a draft from the desk: B goes back to it. */
+let readingDraft = false;
+let desk: Desk | null = null;
+const draftBanner = document.createElement('button');
+draftBanner.className = 'draft-banner hidden';
+draftBanner.innerHTML = 'Reading your draft · <kbd>B</kbd> back to the desk';
+draftBanner.addEventListener('click', () => backToDesk());
+document.body.appendChild(draftBanner);
 const events: RampageEvent[] = [];
 const scratch = new pc.Vec3();
 const mouth = new pc.Vec3();
@@ -119,7 +131,7 @@ function restartChapter() {
   else buildForest();
 }
 
-const controls = new Controls(canvas, rig, { KeyM: toggleMute, KeyR: restartChapter });
+const controls = new Controls(canvas, rig, { KeyM: toggleMute, KeyR: restartChapter, KeyB: () => backToDesk() });
 
 /**
  * Touch controls exist only on touch devices; the keyboard path is untouched.
@@ -165,13 +177,14 @@ function buildCave() {
   hud.narrate('intro', true);
 }
 
-function buildForest() {
+function buildForest(draft?: LevelDefinition) {
+  if (draft) currentLevel = draft;
   clearWorld();
   sceneName = 'forest';
   telemetry.note({ scene: 'forest', together: party !== null });
   lighting.village();
-  // Together, the room decides the level; alone, it is the default.
-  const level = getLevel(party?.session.level || undefined);
+  // Together, the room decides the level; alone, it is the default or a draft.
+  const level = party ? getLevel(party.session.level || undefined) : currentLevel;
   // Together, this is a replica of the server's village: same props from the
   // same level, dwarves by snapshot, the local drake predicted.
   rampage = new Rampage(simWorld, simRng, drakeSim, level, true, party !== null);
@@ -199,7 +212,60 @@ async function buildExtractedForestSector() {
   hud.setLoading(false);
 }
 
+// ── The author's desk ──────────────────────────────────────────────────────
+
+/** The draft page, drawn as it will play, with nobody home yet. */
+function buildDeskPage(level: LevelDefinition) {
+  clearWorld();
+  sceneName = 'desk';
+  lighting.village();
+  rampage = new Rampage(simWorld, simRng, drakeSim, level, false, true);
+  stage.buildVillage(level, rampage.props);
+  const start = spawnFor(level, 0);
+  drakeSim.place(simWorld, start.x, start.z, start.yaw);
+}
+
+function openDesk(level?: LevelDefinition, resume = false) {
+  if (party) {
+    party.destroy();
+    party = null;
+  }
+  hud.openCover();
+  readingDraft = false;
+  draftBanner.classList.add('hidden');
+  desk ??= new Desk({
+    camera,
+    rig,
+    controls,
+    build: buildDeskPage,
+    propRoot: index => stage.props[index]?.root ?? null,
+    read: draft => {
+      desk!.close();
+      readingDraft = true;
+      draftBanner.classList.remove('hidden');
+      buildForest(draft);
+      hud.setChapter('Your Draft', draft.title);
+    },
+    close: () => {
+      desk!.close();
+      currentLevel = getLevel();
+      buildCave();
+    }
+  }, app);
+  desk.open(level, resume);
+}
+
+function backToDesk() {
+  if (!readingDraft || !desk) return;
+  currentLevel = getLevel();
+  openDesk(undefined, true);
+}
+
 function loadScene(name: SceneName) {
+  if (name === 'desk') return openDesk();
+  if (desk?.isOpen) desk.close();
+  readingDraft = false;
+  draftBanner.classList.add('hidden');
   if (name === 'forestExtract') void buildExtractedForestSector();
   else if (name === 'forest') buildForest();
   else buildCave();
@@ -297,7 +363,13 @@ installDebugApi({
   camera,
   rig,
   controls,
-  fx
+  fx,
+  desk: () => desk
+});
+
+document.querySelector('#write-chapter')?.addEventListener('click', event => {
+  event.preventDefault();
+  openDesk();
 });
 
 /**
@@ -317,11 +389,13 @@ function finishBoot() {
     if (!boot) return;
     boot.classList.add('done');
     setTimeout(() => boot.remove(), 800);
-    // A direct link to a room skips the cover and joins.
+    // A direct link to a room skips the cover and joins; ?desk opens the desk.
     const room = params.get('room');
     if (room && !party) {
       hud.openCover();
       startParty(room, params.get('name') ?? '');
+    } else if (params.has('desk')) {
+      openDesk();
     }
   });
 }
@@ -353,9 +427,26 @@ const drakeYaw = () => {
   return drakeTransform.yaw;
 };
 
+/** A frame at the desk: pan and pick, draw the page, no simulation. */
+function deskFrame(frameDt: number) {
+  controls.update();
+  desk!.update(frameDt);
+  drake.breathHeld = false;
+  drake.lookTarget = null;
+  drake.update(simWorld.state, frameDt, elapsed);
+  const fires = stage.update(frameDt, elapsed, fx);
+  fx.assignLights(fires);
+  fx.update(frameDt, camera, elapsed);
+  sound.update(0, false);
+  rig.update(frameDt, elapsed, desk!.focus, rig.yaw, false);
+  post.focusAt(camera.getPosition().distance(desk!.focus));
+  telemetry.frame(frameDt);
+}
+
 app.on('update', (frameDt: number) => {
   elapsed += frameDt;
   if (!booted && (drake.modelReady || drake.loadError)) finishBoot();
+  if (sceneName === 'desk' && desk?.isOpen) return deskFrame(frameDt);
   // Hit-stop: a few frames of near-freeze on a big impact sells the weight.
   const dt = presenter.timeScale(frameDt);
 
