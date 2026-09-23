@@ -27,6 +27,9 @@ export class Sound {
     const start = () => this.start();
     window.addEventListener('pointerdown', start);
     window.addEventListener('keydown', start);
+    // iOS Safari only unlocks audio inside touchend/click, not pointerdown.
+    window.addEventListener('touchend', start);
+    window.addEventListener('click', start);
   }
 
   private start() {

@@ -27,6 +27,7 @@ import { Hud } from './view/hud';
 import { Sound } from './view/audio';
 import { assetUrl } from './assets';
 import { Party } from './party';
+import { isTouchDevice, TouchControls } from './view/touch';
 import { randomRoomCode } from './net/client';
 import { cleanRoom } from './net/protocol';
 
@@ -66,8 +67,9 @@ declare global {
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 const params = new URLSearchParams(window.location.search);
-// Automated runs get the cheap pipeline: same game, fewer passes.
-const quality = (params.get('quality') ?? (navigator.webdriver ? 'low' : 'high')) as 'high' | 'low';
+const touch = isTouchDevice();
+// Automated runs and phones get the cheap pipeline: same game, fewer passes.
+const quality = (params.get('quality') ?? (navigator.webdriver || touch ? 'low' : 'high')) as 'high' | 'low';
 
 const previous = import.meta.hot?.data.state as SavedState | undefined;
 const app = new pc.Application(canvas, {
@@ -75,7 +77,9 @@ const app = new pc.Application(canvas, {
 });
 app.setCanvasFillMode(pc.FILLMODE_FILL_WINDOW);
 app.setCanvasResolution(pc.RESOLUTION_AUTO);
-app.graphicsDevice.maxPixelRatio = Math.min(window.devicePixelRatio, quality === 'high' ? 2 : 1);
+// Phones get a little more than 1x: their screens are small and dense, and
+// 1x reads as blurry; 2x costs a phone GPU too much fill for the post chain.
+app.graphicsDevice.maxPixelRatio = Math.min(window.devicePixelRatio, quality === 'high' ? 2 : touch ? 1.5 : 1);
 app.start();
 initPaper(app.graphicsDevice);
 
@@ -121,7 +125,7 @@ fill.addComponent('light', { type: 'directional', color: new pc.Color(.55, .7, .
 fill.setEulerAngles(-60, 200, 0);
 app.root.addChild(fill);
 
-const fx = new Fx(world, quality === 'high' ? 8 : 4);
+const fx = new Fx(world, quality === 'high' ? 8 : touch ? 3 : 4);
 const hud = new Hud();
 const sound = new Sound();
 hud.deeds.onComplete = (deed, remaining) => {
@@ -161,12 +165,13 @@ const mouth = new pc.Vec3();
 const previousDrake = new pc.Vec3();
 
 const readInput = (): Input => {
-  frameInput.forward =
-    (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0);
-  frameInput.right =
-    (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
-  frameInput.charging = keys.has('ShiftLeft') || keys.has('ShiftRight');
-  frameInput.breathing = keys.has('Space');
+  const keyForward = (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0);
+  const keyRight = (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
+  // Keyboard and touch produce the same input; whichever is in use wins.
+  frameInput.forward = pc.math.clamp(keyForward + (touchControls?.forward ?? 0), -1, 1);
+  frameInput.right = pc.math.clamp(keyRight + (touchControls?.right ?? 0), -1, 1);
+  frameInput.charging = keys.has('ShiftLeft') || keys.has('ShiftRight') || (touchControls?.charging ?? false);
+  frameInput.breathing = keys.has('Space') || (touchControls?.breathing ?? false);
   frameInput.cameraYaw = cameraYaw;
   return frameInput;
 };
@@ -182,19 +187,34 @@ window.addEventListener('keydown', event => {
     const muted = sound.toggleMute();
     hud.pop(muted ? 'shh.' : '♪', scratch.copy(drake.root.getPosition()).add(new pc.Vec3(0, 3, 0)), 'shout', 1);
   }
-  if (event.code === 'KeyR' && !event.repeat && sceneName === 'forest' && !transitioning) {
-    sound.pageTurn();
-    // Together, the room restarts for everyone; the server says when.
-    if (party) party.session.requestRestart();
-    else buildForest();
-  }
+  if (event.code === 'KeyR' && !event.repeat) restartChapter();
   keys.add(event.code);
 });
 window.addEventListener('keyup', event => keys.delete(event.code));
 window.addEventListener('blur', () => keys.clear());
 window.addEventListener('contextmenu', event => event.preventDefault());
+function restartChapter() {
+  if (sceneName !== 'forest' || transitioning) return;
+  sound.pageTurn();
+  // Together, the room restarts for everyone; the server says when.
+  if (party) party.session.requestRestart();
+  else buildForest();
+}
+
+/** Touch controls exist only on touch devices; the keyboard path is untouched. */
+const touchControls = touch
+  ? new TouchControls(() => hud.openCover(), {
+    mute: () => {
+      const muted = sound.toggleMute();
+      hud.pop(muted ? 'shh.' : '♪', scratch.copy(drake.root.getPosition()).add(new pc.Vec3(0, 3, 0)), 'shout', 1);
+    },
+    restart: () => restartChapter()
+  })
+  : null;
+
 canvas.addEventListener('pointerdown', event => {
-  if (event.button !== 0) return;
+  // Pointer lock is a mouse idea; fingers look with the right thumb.
+  if (event.button !== 0 || event.pointerType === 'touch') return;
   pointerLockRequested = true;
   void canvas.requestPointerLock()?.catch(error => {
     console.debug('Pointer lock unavailable; right-drag look remains active.', error);
@@ -533,6 +553,7 @@ window.__FIRE_DRAKE_DEBUG__ = {
         particles: fx.count
       },
       mayhem: { score: rampage.score, combo: rampage.combo, bestCombo: rampage.bestCombo },
+      touch: touchControls ? { forward: touchControls.forward, right: touchControls.right, charging: touchControls.charging, breathing: touchControls.breathing } : null,
       net: party ? {
         status: party.session.status,
         seat: party.seat,
@@ -719,6 +740,18 @@ app.on('update', (frameDt: number) => {
   fx.update(dt, camera, elapsed);
   sound.fires(fires.length);
   sound.update(rampage.combo, sceneName === 'cave');
+
+  if (touchControls) {
+    touchControls.setVisible(!hud.isCoverShowing && !hud.isLoading);
+    touchControls.update();
+    const look = touchControls.consumeLook();
+    if (look.yaw !== 0 || look.pitch !== 0) cameraYawTarget = null;
+    cameraYaw += look.yaw;
+    cameraPitch = pc.math.clamp(cameraPitch + look.pitch, TUNING.camera.minPitch, TUNING.camera.maxPitch);
+    if (look.zoom !== 0) {
+      targetCameraDistance = pc.math.clamp(targetCameraDistance + look.zoom, TUNING.camera.minDistance, TUNING.camera.maxDistance);
+    }
+  }
 
   if (cameraYawTarget !== null) {
     const delta = ((cameraYawTarget - cameraYaw + 540) % 360) - 180;

@@ -623,3 +623,185 @@ kbd {
   box-shadow: 0 4px 10px rgba(0, 0, 0, .25);
   will-change: transform;
 }
+
+/* ── Touch controls ────────────────────────────────────────────────────── */
+
+.touch-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.touch-layer.hidden { display: none; }
+
+.touch-stick {
+  position: absolute;
+  width: 116px;
+  height: 116px;
+  margin: -58px 0 0 -58px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(251, 244, 228, .18), rgba(251, 244, 228, .32));
+  border: 3px dashed rgba(251, 244, 228, .75);
+  opacity: 0;
+  transition: opacity .15s;
+  pointer-events: none;
+}
+
+.touch-stick.active { opacity: 1; }
+.touch-stick.charging { border-color: var(--saffron); border-style: solid; box-shadow: 0 0 22px rgba(244, 197, 66, .6); }
+
+.touch-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 54px;
+  height: 54px;
+  margin: -27px 0 0 -27px;
+  border-radius: 47% 53% 50% 50% / 52% 48% 52% 48%;
+  background: radial-gradient(circle at 36% 30%, rgba(255, 255, 255, .3), transparent 40%), radial-gradient(circle, #c2415f, #8e2440);
+  box-shadow: inset 0 -4px 8px rgba(0, 0, 0, .3), 0 6px 14px rgba(40, 0, 10, .45);
+}
+
+.touch-button {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border: 0;
+  padding: 0;
+  font: 14px var(--caps);
+  letter-spacing: .06em;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 8px 18px rgba(30, 10, 10, .4);
+  transition: transform .08s;
+}
+
+.touch-button.held { transform: scale(.92); }
+
+.touch-fire {
+  right: calc(22px + env(safe-area-inset-right));
+  bottom: calc(26px + env(safe-area-inset-bottom));
+  width: 96px;
+  height: 96px;
+  border-radius: 50% 50% 50% 50% / 62% 62% 40% 40%;
+  color: #fff4d6;
+  background: radial-gradient(circle at 50% 70%, #ffd35a 0 18%, #ff8a26 36%, #e8431c 70%);
+  text-shadow: 0 1px 2px rgba(80, 10, 0, .7);
+}
+
+.touch-fire.held { box-shadow: 0 0 30px rgba(255, 140, 40, .9), 0 8px 18px rgba(30, 10, 10, .4); }
+
+.touch-charge {
+  right: calc(132px + env(safe-area-inset-right));
+  bottom: calc(22px + env(safe-area-inset-bottom));
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  color: var(--oxblood);
+  background: var(--paper);
+  border: 3px dashed rgba(109, 36, 56, .55);
+  font-size: 12px;
+}
+.touch-charge.held { background: var(--saffron); }
+
+.touch-small {
+  position: absolute;
+  top: calc(12px + env(safe-area-inset-top));
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(251, 244, 228, .9);
+  color: var(--oxblood);
+  font: 18px var(--serif);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, .3);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.touch-mute { left: 50%; margin-left: -44px; }
+.touch-restart { left: 50%; margin-left: 6px; }
+
+/* ── Portrait: ask for landscape ──────────────────────────────────────── */
+
+#rotate {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: none;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  background: radial-gradient(ellipse at center, #3a1624 0%, #1a1016 75%);
+  color: #f3d9a4;
+}
+
+@media (orientation: portrait) and (pointer: coarse) {
+  #rotate { display: grid; }
+}
+
+.rotate-book {
+  width: 64px;
+  height: 90px;
+  border-radius: 3px 8px 8px 3px;
+  background: linear-gradient(135deg, #7c2a40, #561729);
+  box-shadow: inset 0 0 0 4px rgba(242, 193, 78, .5), 0 10px 20px rgba(0, 0, 0, .5);
+  animation: rotate-book 2.4s ease-in-out infinite;
+}
+
+@keyframes rotate-book {
+  0%, 25% { transform: rotate(0); }
+  55%, 85% { transform: rotate(-90deg); }
+  100% { transform: rotate(0); }
+}
+
+.rotate-title { font: 26px var(--caps); color: var(--gold); }
+.rotate-sub { font-style: italic; opacity: .8; }
+
+/* ── Touch and small screens: a compact storybook ──────────────────────── */
+
+body.touch .controls { display: none; }
+body.touch #stats { display: none; }
+
+@media (max-height: 520px) {
+  .chapter { top: 8px; left: 10px; padding: 7px 14px 8px; max-width: 46vw; }
+  .brand { font-size: 10px; }
+  .chapter-number { font-size: 11px; }
+  .chapter-title { font-size: 15px; }
+  .mayhem { top: 6px; right: 8px; width: 150px; }
+  .mayhem-label { font-size: 10px; }
+  .seal { width: 64px; height: 64px; }
+  .seal::before { inset: 7px; }
+  .seal span { font-size: 22px; }
+  .tier { font-size: 11px; padding: 3px 16px 4px; margin-top: 4px; }
+  .combo { font-size: 13px; min-height: 16px; margin-top: 2px; }
+  .deeds { top: 132px; right: 8px; width: 170px; padding: 7px 10px 6px; }
+  .deeds-title { font-size: 11px; }
+  .deeds li { padding: 2px 0; grid-template-columns: 14px 1fr auto; gap: 5px; }
+  .deed-box { width: 12px; height: 12px; }
+  .deed-title { font-size: 12px; }
+  .deed-flavour { display: none; }
+  .narrator { bottom: 8px; width: min(46vw, 420px); padding: 7px 16px 8px; font-size: 13px; }
+  .party { top: 76px; left: 10px; min-width: 150px; padding: 6px 10px; font-size: 12px; }
+  .party-hint { display: none; }
+  .pop-sfx { font-size: 30px; }
+  .pop-combo { font-size: 36px; }
+  .pop-shout { font-size: 14px; }
+  .pop-deed { font-size: 17px; }
+  .cover-board { padding: 18px 22px 14px; }
+  #cover h1 { font-size: 46px; }
+  .cover-sub { font-size: 14px; }
+  .cover-rule { margin: 8px 30px; }
+  .cover-together { margin-top: 10px; padding-top: 8px; }
+  .together-row input { width: 112px; font-size: 16px; }
+  .together-hint { display: none; }
+  .end-page { padding: 18px 24px 16px; }
+  .end-page h2 { font-size: 48px; }
+  .end-stats { gap: 2px 14px; margin-bottom: 10px; }
+}
+body.touch .together-row input { font-size: 16px; }

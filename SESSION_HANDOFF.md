@@ -154,6 +154,18 @@ relative to its child, and turn about world up. The debug API gains
 `public/assets/forest-sector/` holds the archived extraction (20 GLBs plus
 manifest).
 
+## Phones
+
+Touch devices (`src/view/touch.ts`, created only when the primary pointer is
+coarse) get a floating left-thumb joystick (analog; pushing to the rim
+charges), right-thumb drag to look, pinch to zoom, hold-to-breathe and
+hold-to-charge buttons, plus mute and restart. Everything feeds the same
+`Input` the keyboard does, so phones and laptops share multiplayer rooms.
+Phones default to the low pipeline at 1.5x pixel ratio, with 3 fire
+lights. Portrait shows a "turn the book sideways" page: landscape is
+required. The HUD compacts below 520 px tall. `tests/touch.spec.ts`
+drives an emulated landscape phone with real DevTools touch events.
+
 ## Publishing
 
 - **itch.io:** `npm run publish:itch` packages the build (only the six
@@ -208,7 +220,7 @@ and layout constraints.
 npm run iterate    # both typechecks, vite build, playwright
 ```
 
-Last verified 2026-09-23: 43 passed (including two-browser multiplayer).
+Last verified 2026-09-23: 44 passed (including two-browser multiplayer and phone touch).
 
 For screenshots, the Playwright MCP server can hang if the page spams console
 errors (Vite forwards them). A plain `playwright-core` script with

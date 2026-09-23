@@ -134,6 +134,14 @@ export class Hud {
     window.addEventListener('pointerdown', dismiss);
   }
 
+  get isCoverShowing() {
+    return this.coverOpen;
+  }
+
+  get isLoading() {
+    return this.loading.classList.contains('visible');
+  }
+
   openCover() {
     if (!this.coverOpen) return;
     this.coverOpen = false;
