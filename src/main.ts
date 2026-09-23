@@ -14,11 +14,11 @@ import { World } from './sim/world';
 import { DrakeSim } from './sim/drake';
 import { Rng } from './sim/random';
 import { Rampage, type RampageEvent } from './sim/rampage';
-import { PropKind } from './sim/props';
+import { PropKind, PropState } from './sim/props';
 import { buildVillageLayout } from './sim/village';
 import type { Input } from './sim/types';
 import { initPaper } from './view/paper';
-import { Stage } from './view/stage';
+import { prewarmVillage, Stage } from './view/stage';
 import { Fx } from './view/fx';
 import { Puppet } from './view/puppet';
 import { DrakeView, loadAsset } from './view/drake';
@@ -51,6 +51,8 @@ declare global {
       teleport: (x: number, z: number) => void;
       loadScene: (name: SceneName) => void;
       resetCamera: () => void;
+      lookAt: (x: number, z: number) => void;
+      nearest: (kind: 'dwarf' | 'cottage' | 'haystack' | 'stall' | 'maypole' | 'tree' | 'fence') => { x: number; z: number; distance: number } | null;
     };
   }
 }
@@ -135,6 +137,8 @@ let cameraPitch: number = TUNING.camera.pitchDegrees;
 let cameraDistance: number = TUNING.camera.distance;
 let targetCameraDistance: number = TUNING.camera.distance;
 let pointerLockRequested = false;
+/** Automation: when set, the camera eases round to this yaw. Any mouse look cancels it. */
+let cameraYawTarget: number | null = null;
 let trauma = 0;
 let fovKick = 0;
 let hitStop = 0;
@@ -185,6 +189,7 @@ document.addEventListener('mousemove', event => {
   const isPointerLook = document.pointerLockElement === canvas;
   const isRightDrag = (event.buttons & 2) !== 0;
   if (!isPointerLook && !isRightDrag) return;
+  cameraYawTarget = null;
   cameraYaw -= event.movementX * TUNING.camera.mouseSensitivity;
   cameraPitch = pc.math.clamp(
     cameraPitch + event.movementY * TUNING.camera.mouseSensitivity,
@@ -359,7 +364,11 @@ async function transitionToForest() {
 const requestedLevel = params.get('level');
 if (requestedLevel === 'extracted') void buildExtractedForestSector();
 else if (sceneName === 'forest') buildForest();
-else buildCave();
+else {
+  buildCave();
+  // Draw chapter two's paper while the reader is still on the cover.
+  setTimeout(() => void prewarmVillage(buildVillageLayout()), 400);
+}
 
 // ── Events: the simulation told us something happened ──────────────────────
 
@@ -465,6 +474,29 @@ window.__FIRE_DRAKE_DEBUG__ = {
     else if (name === 'forest') buildForest();
     else buildCave();
   },
+  lookAt: (x, z) => {
+    const at = drake.root.getPosition();
+    cameraYawTarget = Math.atan2(-(x - at.x), -(z - at.z)) * pc.math.RAD_TO_DEG;
+  },
+  nearest: kind => {
+    // Automation helper for scripted play: the closest untouched target.
+    const at = drake.root.getPosition();
+    const t = { x: 0, y: 0, z: 0, yaw: 0 };
+    let best: { x: number; z: number; distance: number } | null = null;
+    const consider = (x: number, z: number) => {
+      const distance = Math.hypot(x - at.x, z - at.z);
+      if (!best || distance < best.distance) best = { x, z, distance };
+    };
+    if (kind === 'dwarf') {
+      for (const d of rampage.dwarves) {
+        if (!d.dead && !d.burning && !d.airborne && simWorld.state.transform(d.id, t)) consider(t.x, t.z);
+      }
+    } else {
+      const kinds = { cottage: PropKind.Cottage, haystack: PropKind.Haystack, stall: PropKind.Stall, maypole: PropKind.Maypole, tree: PropKind.Tree, fence: PropKind.Fence };
+      for (const p of rampage.props) if (p.kind === kinds[kind] && p.state === PropState.Intact) consider(p.x, p.z);
+    }
+    return best;
+  },
   resetCamera: () => {
     cameraYaw = drakeYaw();
     cameraPitch = TUNING.camera.pitchDegrees;
@@ -534,6 +566,11 @@ app.on('update', (frameDt: number) => {
   fx.update(dt, camera, elapsed);
   sound.fires(fires.length);
   sound.update(rampage.combo, sceneName === 'cave');
+
+  if (cameraYawTarget !== null) {
+    const delta = ((cameraYawTarget - cameraYaw + 540) % 360) - 180;
+    cameraYaw += Math.sign(delta) * Math.min(Math.abs(delta), frameDt * 160);
+  }
 
   // Camera: follow, zoom, charge kick, shake.
   const drakePosition = drake.root.getPosition();

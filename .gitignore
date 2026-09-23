@@ -21,3 +21,6 @@ assets-source/
 # Editor swap files
 *.swp
 *.swo
+
+# Gameplay recordings (npm run record)
+recordings/

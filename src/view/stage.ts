@@ -49,7 +49,8 @@ import {
   retain,
   ringMesh
 } from './paper';
-import { PropKind, PropState, type PropSim } from '../sim/props';
+import { PropKind, PropSim, PropState } from '../sim/props';
+import { World } from '../sim/world';
 import type { VillageLayout } from '../sim/village';
 
 // ── Shared texture cache: drawn once per session, reused across scene loads ──
@@ -737,3 +738,33 @@ const drawHoard = () => {
   ctx.beginPath(); ctx.arc(202, 120, 5, 0, Math.PI * 2); ctx.fill();
   return canvas;
 };
+
+/**
+ * Draw the village's art ahead of time, a piece per macrotask, so turning the
+ * page to chapter two does not freeze on first visit. Every step fills the
+ * same `once` cache `buildVillage` reads from; the last step builds and
+ * discards a whole hidden village to catch whatever the earlier steps missed.
+ */
+export async function prewarmVillage(layout: VillageLayout) {
+  const yieldToFrame = () => new Promise(resolve => setTimeout(resolve, 0));
+  once('ground:village', () => canvasTexture(drawVillageGround(layout.paths, layout.pond), { softAlpha: true }));
+  await yieldToFrame();
+  const seen = new Set<number>();
+  for (const p of layout.props) {
+    if (p.kind === PropKind.Tree && !seen.has(p.variant % 40)) {
+      seen.add(p.variant % 40);
+      treeMaterial(p.variant);
+      await yieldToFrame();
+    } else if (p.kind === PropKind.Cottage) {
+      cottageMaterials(p.variant);
+      await yieldToFrame();
+    }
+  }
+  const hidden = new pc.Entity('Prewarm');
+  hidden.enabled = false;
+  const world = new World();
+  const stage = new Stage(hidden);
+  stage.buildVillage(layout, layout.props.map(p => new PropSim(world, p.kind, p.x, p.z, p.yaw, p.size)));
+  stage.destroy();
+  hidden.destroy();
+}
