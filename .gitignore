@@ -1,4 +1,19 @@
 node_modules/
-dist/
 .DS_Store
+
+# Build and tooling output
+dist/
+playwright-report/
+test-results/
+.playwright-mcp/
 *.log
+
+# Large binary assets (~155 MB). Reproducible from the Unreal project via
+# Scripts/export_forest_sector.py plus the conversion steps in
+# docs/forest-sector-iteration-1.md. They live on disk only.
+public/assets/
+assets-source/
+
+# Former void repository metadata, kept on disk for reference. History was
+# replayed into git; each commit carries a `void-commit:` trailer.
+.void/

@@ -12,8 +12,9 @@ client/server. Linked projects:
 - `/Users/martinboros/SRC/FireDrakeGame_UE` — the Unreal project, **reference
   only**.
 
-Version control is **void**, not git. Ignore rules live in `.ignore`, not
-`.gitignore`. Use `void status`, `void add`, `void commit`.
+Version control is **git** (switched from void on 2026-09-23; history was
+replayed, and each commit carries a `void-commit:` trailer). The old `.void/`
+directory is kept on disk, ignored, for reference.
 
 The worktree contains substantial user work and ~155 MB of assets excluded from
 version control. Do not reset, delete, or regenerate it as cleanup.

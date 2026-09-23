@@ -24,20 +24,12 @@ Two linked projects:
 - `/Users/martinboros/SRC/FireDrakeGame_UE` — the Unreal project. **Reference
   only.** See below.
 
-## Version control: void, not git
+## Version control: git
 
-This repository is tracked with **void**, not git. A `.git` directory exists but
-has zero commits and is not used.
-
-```sh
-void status --short
-void log -n 5
-void add <paths> && void commit -m "…"
-```
-
-Ignore rules live in **`.ignore`**, not `.gitignore` — void disables git ignore
-sources entirely and uses the ripgrep/fd convention. `node_modules/`, `.git/`,
-and `.DS_Store` are excluded by void itself.
+This repository is tracked with **git**. It was tracked with void until
+2026-09-23; that history was replayed into git with original dates and
+messages, and each commit carries a `void-commit: <cid>` trailer. The old
+`.void/` directory remains on disk, ignored, for reference.
 
 Excluded from version control and present on disk only: `public/assets/` and
 `assets-source/` (~155 MB), `dist/`, `test-results/`, `playwright-report/`.
@@ -178,7 +170,7 @@ are forge work.
 
 ```sh
 cd /Users/martinboros/SRC/FireDrakeGame_PlayCanvas
-void log -n 3
+git log --oneline -3
 npm run iterate
 npm run dev
 ```
