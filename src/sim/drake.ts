@@ -42,7 +42,14 @@ export class DrakeSim {
 
   private readonly scratch: Transform = { x: 0, y: 0, z: 0, yaw: 0 };
 
-  constructor(world: World, x: number, z: number, yaw = 0) {
+  constructor(
+    world: World,
+    x: number,
+    z: number,
+    yaw = 0,
+    /** Owning player, for credit and colour. 0 in single player. */
+    readonly player = 0
+  ) {
     this.id = world.spawn(EntityKind.Drake, x, this.groundY, z, yaw);
     world.addFlag(this.id, EntityFlags.Grounded);
     this.setForwardFromYaw(yaw);

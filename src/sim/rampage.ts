@@ -10,7 +10,7 @@
  */
 
 import { DrakeSim } from './drake';
-import { DwarfSim } from './dwarf';
+import { DwarfSim, type Threat } from './dwarf';
 import { PropKind, PropSim, PropState } from './props';
 import type { Rng } from './random';
 import { EntityFlags, type Input, type Transform } from './types';
@@ -33,19 +33,25 @@ const LAUNCH_MIN_SPEED = 4;
 export const FLATTEN_SPEED = 12;
 
 const MAX_DWARVES = 12;
+/** Extra dwarves per drake beyond the first, so a crowded room stays fed. */
+const DWARVES_PER_EXTRA_DRAKE = 4;
 const SPAWN_INTERVAL = 2.5;
 const COMBO_WINDOW = 2.6;
 
+/** Player credited with an event; -1 when nobody in particular did it. */
+export type By = { by: number };
+
 export type RampageEvent =
-  | { type: 'dwarfIgnited'; x: number; z: number; combo: number; points: number }
-  | { type: 'dwarfLaunched'; x: number; z: number; combo: number; points: number; launches: number }
+  | ({ type: 'dwarfIgnited'; x: number; z: number; combo: number; points: number } & By)
+  | ({ type: 'dwarfLaunched'; x: number; z: number; combo: number; points: number; launches: number } & By)
   | { type: 'dwarfLanded'; x: number; z: number }
   | { type: 'dwarfGone'; x: number; z: number }
   | { type: 'dwarfSpawned'; x: number; z: number }
-  | { type: 'propIgnited'; x: number; z: number; kind: PropKind; combo: number; points: number }
+  | ({ type: 'propIgnited'; x: number; z: number; kind: PropKind; combo: number; points: number } & By)
   | { type: 'propCharred'; x: number; z: number; kind: PropKind }
-  | { type: 'propFlattened'; x: number; z: number; kind: PropKind; combo: number; points: number }
-  | { type: 'bump'; x: number; z: number };
+  | ({ type: 'propFlattened'; x: number; z: number; kind: PropKind; combo: number; points: number } & By)
+  | ({ type: 'bump'; x: number; z: number } & By)
+  | { type: 'drakeBump'; x: number; z: number; a: number; b: number };
 
 const POINTS = {
   dwarfIgnited: 10,
@@ -54,15 +60,22 @@ const POINTS = {
   propFlattened: { [PropKind.Tree]: 0, [PropKind.Cottage]: 60, [PropKind.Haystack]: 10, [PropKind.Stall]: 25, [PropKind.Fence]: 4, [PropKind.Signpost]: 6, [PropKind.Maypole]: 0 }
 } as const;
 
+/** Per-drake input, or one input for every drake (single player, tests). */
+export type Inputs = Input | ((drake: DrakeSim) => Input);
+
 export class Rampage {
-  readonly drake: DrakeSim;
+  /** Every drake in the level. The first is the local one in single player. */
+  readonly drakes: DrakeSim[] = [];
   readonly dwarves: DwarfSim[] = [];
   readonly props: PropSim[] = [];
   readonly events: RampageEvent[] = [];
 
+  /** The whole room's mayhem, which is what the seal and the deeds track. */
   score = 0;
   combo = 0;
   bestCombo = 0;
+  /** Each player's share of `score`. */
+  readonly points = new Map<number, number>();
   private comboTimer = 0;
   private spawnTimer = 0;
   /** Only a level with a layout spawns dwarves. */
@@ -70,16 +83,17 @@ export class Rampage {
 
   private readonly at: Transform = { x: 0, y: 0, z: 0, yaw: 0 };
   private readonly drakeAt: Transform = { x: 0, y: 0, z: 0, yaw: 0 };
+  private readonly otherAt: Transform = { x: 0, y: 0, z: 0, yaw: 0 };
 
   constructor(
     private readonly world: World,
     private readonly rng: Rng,
-    drake: DrakeSim,
+    drake: DrakeSim | null,
     layout?: VillageLayout,
     /** The cave is a prologue: nothing there counts towards mayhem. */
     private readonly scoring = true
   ) {
-    this.drake = drake;
+    if (drake) this.drakes.push(drake);
     this.village = layout !== undefined;
     if (layout) {
       for (const p of layout.props) this.props.push(new PropSim(world, p.kind, p.x, p.z, p.yaw, p.size));
@@ -91,6 +105,20 @@ export class Rampage {
         this.dwarves.push(new DwarfSim(world, this.rng, x, z));
       }
     }
+  }
+
+  /** The primary drake: the only one in single player. */
+  get drake(): DrakeSim {
+    return this.drakes[0];
+  }
+
+  addDrake(drake: DrakeSim): void {
+    if (!this.drakes.includes(drake)) this.drakes.push(drake);
+  }
+
+  removeDrake(drake: DrakeSim): void {
+    const i = this.drakes.indexOf(drake);
+    if (i >= 0) this.drakes.splice(i, 1);
   }
 
   get livingDwarves() {
@@ -105,29 +133,34 @@ export class Rampage {
     return n;
   }
 
-  tick(dt: number, input: Input): void {
+  tick(dt: number, inputs: Inputs): void {
     const world = this.world;
-    this.drake.update(world, dt, input);
-    world.state.transform(this.drake.id, this.drakeAt);
-    const drake = this.drakeAt;
+    const inputFor = typeof inputs === 'function' ? inputs : () => inputs;
 
-    this.collideDrake(drake);
-    if (this.drake.breathed) this.breathe(drake);
+    for (const drake of this.drakes) {
+      drake.update(world, dt, inputFor(drake));
+      world.state.transform(drake.id, this.drakeAt);
+      this.collideDrake(drake, this.drakeAt);
+      if (drake.breathed) this.breathe(drake, this.drakeAt);
+    }
+    this.collideDrakes();
 
-    const threat = { x: drake.x, z: drake.z };
     for (const dwarf of this.dwarves) {
       if (dwarf.dead) continue;
       // Last known position, for the ghost when this tick burns it out.
       world.state.transform(dwarf.id, this.at);
       const lastX = this.at.x;
       const lastZ = this.at.z;
-      dwarf.update(world, dt, threat);
+      dwarf.update(world, dt, this.nearestThreat(lastX, lastZ));
       if (!world.state.transform(dwarf.id, this.at)) {
         if (dwarf.dead) this.events.push({ type: 'dwarfGone', x: lastX, z: lastZ });
         continue;
       }
       if (dwarf.landed) this.events.push({ type: 'dwarfLanded', x: this.at.x, z: this.at.z });
-      this.ramDwarf(dwarf, drake);
+      for (const drake of this.drakes) {
+        world.state.transform(drake.id, this.drakeAt);
+        this.ramDwarf(drake, dwarf, this.drakeAt);
+      }
     }
     this.spreadFromDwarves();
     this.spreadBetweenProps(dt);
@@ -155,7 +188,7 @@ export class Rampage {
     this.events.length = 0;
   }
 
-  /** Remove every entity this rampage owns except the drake. */
+  /** Remove every entity this rampage owns except the drakes. */
   destroy(): void {
     for (const dwarf of this.dwarves) if (!dwarf.dead) this.world.destroy(dwarf.id);
     for (const prop of this.props) this.world.destroy(prop.id);
@@ -165,21 +198,37 @@ export class Rampage {
 
   // ── Rules ────────────────────────────────────────────────────────────────
 
-  private score_(base: number): { combo: number; points: number } {
-    if (!this.scoring || base <= 0) return { combo: this.combo, points: 0 };
+  private score_(base: number, by: number): { combo: number; points: number; by: number } {
+    if (!this.scoring || base <= 0) return { combo: this.combo, points: 0, by };
     this.combo++;
     this.bestCombo = Math.max(this.bestCombo, this.combo);
     this.comboTimer = COMBO_WINDOW;
     const points = Math.round(base * (1 + (this.combo - 1) * .25));
     this.score += points;
-    return { combo: this.combo, points };
+    if (by >= 0) this.points.set(by, (this.points.get(by) ?? 0) + points);
+    return { combo: this.combo, points, by };
   }
 
-  private breathe(drake: Transform): void {
-    const fx = this.drake.forwardX;
-    const fz = this.drake.forwardZ;
-    const ox = drake.x + fx * 2.2;
-    const oz = drake.z + fz * 2.2;
+  /** The drake a dwarf should run from: the nearest one. */
+  private nearestThreat(x: number, z: number): Threat | undefined {
+    let best: Threat | undefined;
+    let bestDistance = Infinity;
+    for (const drake of this.drakes) {
+      if (!this.world.state.transform(drake.id, this.otherAt)) continue;
+      const distance = Math.hypot(this.otherAt.x - x, this.otherAt.z - z);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = { x: this.otherAt.x, z: this.otherAt.z };
+      }
+    }
+    return best;
+  }
+
+  private breathe(drake: DrakeSim, at: Transform): void {
+    const fx = drake.forwardX;
+    const fz = drake.forwardZ;
+    const ox = at.x + fx * 2.2;
+    const oz = at.z + fz * 2.2;
     for (const dwarf of this.dwarves) {
       if (dwarf.dead || dwarf.burning) continue;
       if (!this.world.state.transform(dwarf.id, this.at)) continue;
@@ -187,9 +236,7 @@ export class Rampage {
       const dz = this.at.z - oz;
       const distance = Math.hypot(dx, dz);
       if (distance < BREATH_RANGE && (distance < .8 || (dx * fx + dz * fz) / distance > BREATH_CONE_DWARF)) {
-        if (dwarf.ignite(this.world)) {
-          this.events.push({ type: 'dwarfIgnited', x: this.at.x, z: this.at.z, ...this.score_(POINTS.dwarfIgnited) });
-        }
+        this.igniteDwarf(dwarf, drake.player);
       }
     }
     for (const prop of this.props) {
@@ -202,19 +249,28 @@ export class Rampage {
       const cos = centre > .01 ? (dx * fx + dz * fz) / centre : 1;
       // Broad props catch at wider angles: widen the cone by their size.
       const cone = Math.min(BREATH_CONE_PROP, BREATH_CONE_PROP - prop.radius / Math.max(centre, 1) * .5);
-      if (cos > cone) this.igniteProp(prop);
+      if (cos > cone) this.igniteProp(prop, drake.player);
     }
   }
 
-  private igniteProp(prop: PropSim): void {
+  private igniteDwarf(dwarf: DwarfSim, by: number): void {
+    if (!this.world.state.transform(dwarf.id, this.at)) return;
+    if (dwarf.ignite(this.world)) {
+      dwarf.igniter = by;
+      this.events.push({ type: 'dwarfIgnited', x: this.at.x, z: this.at.z, ...this.score_(POINTS.dwarfIgnited, by) });
+    }
+  }
+
+  private igniteProp(prop: PropSim, by: number): void {
     if (prop.ignite(this.world)) {
-      this.events.push({ type: 'propIgnited', x: prop.x, z: prop.z, kind: prop.kind, ...this.score_(POINTS.propIgnited[prop.kind]) });
+      prop.igniter = by;
+      this.events.push({ type: 'propIgnited', x: prop.x, z: prop.z, kind: prop.kind, ...this.score_(POINTS.propIgnited[prop.kind], by) });
     }
   }
 
-  private collideDrake(drake: Transform): void {
-    const bodyX = drake.x + this.drake.forwardX * DRAKE_BODY_AHEAD;
-    const bodyZ = drake.z + this.drake.forwardZ * DRAKE_BODY_AHEAD;
+  private collideDrake(drake: DrakeSim, at: Transform): void {
+    const bodyX = at.x + drake.forwardX * DRAKE_BODY_AHEAD;
+    const bodyZ = at.z + drake.forwardZ * DRAKE_BODY_AHEAD;
     let pushX = 0;
     let pushZ = 0;
     for (const prop of this.props) {
@@ -228,9 +284,9 @@ export class Rampage {
       const reach = DRAKE_RADIUS + Math.max(prop.radius, .6);
       if (distance >= reach) continue;
 
-      if (prop.spec.flattenable && prop.state === PropState.Intact && this.drake.speed > (prop.kind === PropKind.Fence ? LAUNCH_MIN_SPEED : FLATTEN_SPEED)) {
+      if (prop.spec.flattenable && prop.state === PropState.Intact && drake.speed > (prop.kind === PropKind.Fence ? LAUNCH_MIN_SPEED : FLATTEN_SPEED)) {
         if (prop.flatten(this.world)) {
-          this.events.push({ type: 'propFlattened', x: prop.x, z: prop.z, kind: prop.kind, ...this.score_(POINTS.propFlattened[prop.kind]) });
+          this.events.push({ type: 'propFlattened', x: prop.x, z: prop.z, kind: prop.kind, ...this.score_(POINTS.propFlattened[prop.kind], drake.player) });
         }
         continue;
       }
@@ -240,22 +296,54 @@ export class Rampage {
       pushZ += (distance > .001 ? dz / distance : 0) * overlap;
     }
     if (pushX !== 0 || pushZ !== 0) {
-      this.drake.place(this.world, drake.x + pushX, drake.z + pushZ);
+      const speed = drake.speed;
+      drake.place(this.world, at.x + pushX, at.z + pushZ);
       // `place` zeroes speed; a wall should, but only the part driving into it.
-      this.drake.speed *= .35;
-      this.world.state.transform(this.drake.id, drake);
-      this.events.push({ type: 'bump', x: drake.x, z: drake.z });
+      drake.speed = speed * .35;
+      this.world.state.transform(drake.id, at);
+      this.events.push({ type: 'bump', x: at.x, z: at.z, by: drake.player });
     }
   }
 
-  private ramDwarf(dwarf: DwarfSim, drake: Transform): void {
-    if (dwarf.airborne) return;
-    const bodyX = drake.x + this.drake.forwardX * DRAKE_BODY_AHEAD;
-    const bodyZ = drake.z + this.drake.forwardZ * DRAKE_BODY_AHEAD;
+  /** Drakes are solid to each other, and a charging drake bowls another over. */
+  private collideDrakes(): void {
+    for (let i = 0; i < this.drakes.length; i++) {
+      for (let j = i + 1; j < this.drakes.length; j++) {
+        const a = this.drakes[i];
+        const b = this.drakes[j];
+        if (!this.world.state.transform(a.id, this.drakeAt) || !this.world.state.transform(b.id, this.otherAt)) continue;
+        const dx = this.otherAt.x - this.drakeAt.x;
+        const dz = this.otherAt.z - this.drakeAt.z;
+        const distance = Math.hypot(dx, dz);
+        const reach = DRAKE_RADIUS * 2.2;
+        if (distance >= reach) continue;
+        const nx = distance > .001 ? dx / distance : 1;
+        const nz = distance > .001 ? dz / distance : 0;
+        const overlap = reach - distance;
+        // The faster drake wins the shove.
+        const share = a.speed + b.speed > .1 ? a.speed / (a.speed + b.speed) : .5;
+        const speedA = a.speed;
+        const speedB = b.speed;
+        a.place(this.world, this.drakeAt.x - nx * overlap * (1 - share), this.drakeAt.z - nz * overlap * (1 - share));
+        b.place(this.world, this.otherAt.x + nx * overlap * share, this.otherAt.z + nz * overlap * share);
+        a.speed = speedA * .5;
+        b.speed = speedB * .5;
+        if (Math.max(speedA, speedB) > LAUNCH_MIN_SPEED) {
+          this.events.push({ type: 'drakeBump', x: (this.drakeAt.x + this.otherAt.x) / 2, z: (this.drakeAt.z + this.otherAt.z) / 2, a: a.player, b: b.player });
+        }
+      }
+    }
+  }
+
+  private ramDwarf(drake: DrakeSim, dwarf: DwarfSim, at: Transform): void {
+    if (dwarf.airborne || dwarf.dead) return;
+    if (!this.world.state.transform(dwarf.id, this.at)) return;
+    const bodyX = at.x + drake.forwardX * DRAKE_BODY_AHEAD;
+    const bodyZ = at.z + drake.forwardZ * DRAKE_BODY_AHEAD;
     const dx = this.at.x - bodyX;
     const dz = this.at.z - bodyZ;
     const distance = Math.hypot(dx, dz);
-    const speed = this.drake.speed;
+    const speed = drake.speed;
     // A charging drake sweeps a wider path: wings out, head low.
     const reach = DRAKE_RADIUS + (speed > TUNING.drake.walkSpeed + 1 ? 1.1 : .45);
     if (distance > reach) return;
@@ -268,14 +356,14 @@ export class Rampage {
       return;
     }
     // Mostly along the drake's heading, partly sideways off the snout.
-    const dirX = this.drake.forwardX * .8 + (distance > .001 ? dx / distance : 0) * .5;
-    const dirZ = this.drake.forwardZ * .8 + (distance > .001 ? dz / distance : 0) * .5;
+    const dirX = drake.forwardX * .8 + (distance > .001 ? dx / distance : 0) * .5;
+    const dirZ = drake.forwardZ * .8 + (distance > .001 ? dz / distance : 0) * .5;
     const power = 3 + speed * .72;
     if (dwarf.launch(this.world, dirX, dirZ, power)) {
       const bonus = speed > TUNING.drake.walkSpeed + 1 ? 1.5 : 1;
       this.events.push({
         type: 'dwarfLaunched', x: this.at.x, z: this.at.z, launches: dwarf.launches,
-        ...this.score_(Math.round(POINTS.dwarfLaunched * bonus))
+        ...this.score_(Math.round(POINTS.dwarfLaunched * bonus), drake.player)
       });
     }
   }
@@ -289,20 +377,14 @@ export class Rampage {
       const z = this.at.z;
       for (const prop of this.props) {
         if (!prop.flammable) continue;
-        if (Math.hypot(prop.x - x, prop.z - z) < prop.radius + .7) this.igniteProp(prop);
+        if (Math.hypot(prop.x - x, prop.z - z) < prop.radius + .7) this.igniteProp(prop, dwarf.igniter);
       }
       for (const other of this.dwarves) {
         if (other === dwarf || other.dead || other.burning) continue;
         const flags = this.world.state.flags(other.id);
         if (flags & EntityFlags.Airborne) continue;
-        const ox = this.at.x;
-        const oz = this.at.z;
-        if (!this.world.state.transform(other.id, this.at)) continue;
-        if (Math.hypot(this.at.x - ox, this.at.z - oz) < .9 && other.ignite(this.world)) {
-          this.events.push({ type: 'dwarfIgnited', x: this.at.x, z: this.at.z, ...this.score_(POINTS.dwarfIgnited) });
-        }
-        // Restore this dwarf's position for the next comparison.
-        this.world.state.transform(dwarf.id, this.at);
+        if (!this.world.state.transform(other.id, this.otherAt)) continue;
+        if (Math.hypot(this.otherAt.x - x, this.otherAt.z - z) < .9) this.igniteDwarf(other, dwarf.igniter);
       }
     }
   }
@@ -317,13 +399,14 @@ export class Rampage {
       if (source.state !== PropState.Burning) continue;
       for (const target of this.props) {
         if (target === source || !target.flammable) continue;
-        if (source.spreadsTo(target, dt, this.rng)) this.igniteProp(target);
+        if (source.spreadsTo(target, dt, this.rng)) this.igniteProp(target, source.igniter);
       }
     }
   }
 
   private spawnDwarf(): void {
-    if (this.livingDwarves >= MAX_DWARVES) return;
+    const cap = MAX_DWARVES + Math.max(0, this.drakes.length - 1) * DWARVES_PER_EXTRA_DRAKE;
+    if (this.livingDwarves >= cap) return;
     const cottages = this.props.filter(p => p.kind === PropKind.Cottage && p.state === PropState.Intact);
     let x: number;
     let z: number;

@@ -3,6 +3,7 @@ node_modules/
 
 # Build and tooling output
 dist/
+dist-server/
 playwright-report/
 test-results/
 .playwright-mcp/

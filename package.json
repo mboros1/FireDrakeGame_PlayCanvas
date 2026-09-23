@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json && vite build",
+    "build": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json && tsc --noEmit -p server/tsconfig.json && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test:browser": "playwright test",
     "test:browser:headed": "playwright test --headed",
@@ -13,15 +13,19 @@
     "extract:model": "node scripts/extract-model-data.mjs",
     "iterate": "npm run build && npm run test:browser",
     "record": "node scripts/record-gameplay.mjs",
-    "package:itch": "node scripts/package-itch.mjs"
+    "package:itch": "node scripts/package-itch.mjs",
+    "server:build": "tsc --noEmit -p server/tsconfig.json && vite build --config server/vite.config.ts",
+    "server:dev": "npm run server:build && node dist-server/index.js"
   },
   "dependencies": {
-    "playcanvas": "2.21.0"
+    "playcanvas": "2.21.0",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@playwright/mcp": "0.0.78",
     "@playwright/test": "1.61.1",
     "@types/node": "^26.1.1",
+    "@types/ws": "^8.18.1",
     "typescript": "7.0.2",
     "vite": "8.1.5"
   }

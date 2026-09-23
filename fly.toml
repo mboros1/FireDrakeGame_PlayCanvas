@@ -1,0 +1,37 @@
+# Fire Drake room server on Fly.io.
+#
+#   fly deploy          # build remotely and roll out
+#   fly logs            # watch rooms open and close
+#
+# One small machine in Chicago. It stops when nobody is connected and starts
+# on the next connection (a second or two), so idle time costs nothing.
+
+app = 'firedrakegame-playcanvas'
+primary_region = 'ord'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+  [http_service.concurrency]
+    type = 'connections'
+    soft_limit = 200
+    hard_limit = 400
+
+  [[http_service.checks]]
+    grace_period = '5s'
+    interval = '30s'
+    method = 'GET'
+    path = '/health'
+    timeout = '3s'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'

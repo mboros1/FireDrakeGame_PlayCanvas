@@ -33,6 +33,12 @@ const STUN_DURATION = 1.4;
 /** Seconds a dwarf burns before it is destroyed. Matches the Unreal build. */
 export const BURN_DURATION = 5;
 
+/** The part of a dwarf a server sends to clients. */
+export type DwarfReplica = {
+  x: number; y: number; z: number; yaw: number;
+  burn: number; airborne: boolean; stunned: boolean; spin: number; launches: number;
+};
+
 /** What a dwarf is running from this tick, if anything. */
 export type Threat = { x: number; z: number };
 
@@ -60,6 +66,9 @@ export class DwarfSim {
 
   /** True on the tick this dwarf touched down. Presentation reads it for the puff. */
   landed = false;
+
+  /** Player whose fire this is, for credit when it spreads. -1 for nobody. */
+  igniter = -1;
 
   private readonly scratch: Transform = { x: 0, y: 0, z: 0, yaw: 0 };
 
@@ -204,6 +213,24 @@ export class DwarfSim {
       this.landed = true;
     }
     world.setPosition(this.id, x, y, z);
+  }
+
+  /**
+   * Overwrite this dwarf with state received from a server. Clients hold
+   * replica dwarves so the same presentation code draws local and remote
+   * games; the replica is never simulated, only told.
+   */
+  applyReplica(world: World, s: DwarfReplica): void {
+    world.setPosition(this.id, s.x, s.y, s.z);
+    world.setYaw(this.id, s.yaw);
+    this.burnRemaining = s.burn;
+    // A replica only needs airborne to be truthy while flying.
+    this.vy = s.airborne ? 1 : 0;
+    this.vx = 0;
+    this.vz = 0;
+    this.stunRemaining = s.stunned ? 1 : 0;
+    this.spin = s.spin;
+    this.launches = s.launches;
   }
 
   private chooseTarget(): void {

@@ -56,6 +56,8 @@ export class PropSim {
   readonly spec: PropSpec;
   state = PropState.Intact;
   burnElapsed = 0;
+  /** Player whose fire this is, for credit when it spreads. -1 for nobody. */
+  igniter = -1;
 
   constructor(
     world: World,
@@ -111,6 +113,18 @@ export class PropSim {
       return true;
     }
     return false;
+  }
+
+  /** Overwrite with server state. Replica props are drawn, never simulated. */
+  applyReplica(world: World, state: PropState, burnElapsed: number): void {
+    if (state === this.state && Math.abs(burnElapsed - this.burnElapsed) < .05) return;
+    this.state = state;
+    this.burnElapsed = burnElapsed;
+    let flags = 0;
+    if (state === PropState.Burning) flags |= EntityFlags.Burning;
+    if (state === PropState.Charred) flags |= EntityFlags.Charred;
+    if (state === PropState.Flattened) flags |= EntityFlags.Flattened;
+    world.setFlags(this.id, flags);
   }
 
   /** Roll whether this burning prop sets `other` alight this tick. */
