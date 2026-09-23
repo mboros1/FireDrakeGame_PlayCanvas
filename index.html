@@ -78,6 +78,8 @@
       </div>
 
       <div id="stats"></div>
+      <div id="party" class="party hidden"></div>
+      <div id="party-tags"></div>
       <div id="popups"></div>
     </div>
 
@@ -90,6 +92,17 @@
         <div class="cover-sub">being a True &amp; Regrettable Account<br />of the Burning of Little Kindling</div>
         <div class="cover-rule"></div>
         <div class="cover-prompt">press any key to open the book</div>
+        <div class="cover-together">
+          <form id="together-form" autocomplete="off">
+            <div class="together-title">or read it together</div>
+            <div class="together-row">
+              <input id="together-room" maxlength="24" spellcheck="false" aria-label="Room code" />
+              <input id="together-name" maxlength="16" spellcheck="false" placeholder="your name" aria-label="Your name" />
+              <button type="submit">Join</button>
+            </div>
+            <div class="together-hint">same room code, same village · up to four drakes</div>
+          </form>
+        </div>
       </div>
     </div>
 

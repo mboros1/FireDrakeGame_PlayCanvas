@@ -154,6 +154,40 @@ relative to its child, and turn about world up. The debug API gains
 `public/assets/forest-sector/` holds the archived extraction (20 GLBs plus
 manifest).
 
+## Multiplayer
+
+Branch `multiplayer`. Up to four drakes per room, co-op, server-authoritative.
+
+- **Server** (`server/`): Node plus `ws`, bundled by Vite into
+  `dist-server/index.js`. Each room runs the same `Rampage` simulation at a
+  fixed 30 Hz, applies each player's inputs one per tick in order, and sends
+  JSON snapshots at 15 Hz (~780 bytes each, ~12 KB/s per player). Rooms open
+  on first join and close when empty.
+- **Deployed** at `wss://firedrakegame-playcanvas.fly.dev/ws` (Fly app
+  `firedrakegame-playcanvas`, one shared-cpu machine in `ord`,
+  `auto_stop_machines`, so it costs nothing idle and takes a second or two
+  to wake). Deploy with `fly deploy --ha=false`. `.dockerignore` keeps
+  `public/` (the licensed drake) out of the build.
+- **Client** (`src/net/`, `src/party.ts`): the cover has a "read it
+  together" room-code form; `?room=` in the URL also joins directly
+  (`?server=` overrides the server). Together, the cave is skipped. The
+  local drake is predicted in fixed 30 Hz steps with the same movement and
+  collision code, and reconciled using input sequence acknowledgements;
+  measured corrections against Fly are 3–11 mm. Other drakes, dwarves and
+  props are replicas drawn by the ordinary view code, interpolated 110 ms
+  behind. Events arrive in snapshots and drive narration, sound and Deeds
+  unchanged. R restarts the room for everyone.
+- **Local dev:** `npm run server:dev` serves on **:8787** (8080 is taken by
+  the local IPFS gateway), then open
+  `/?room=test&server=ws://127.0.0.1:8787/ws` in two tabs.
+- `tests/multiplayer.spec.ts` runs two browsers against a local server
+  (Playwright starts it).
+
+This is a deliberate detour from `docs/ARCHITECTURE.md`, which plans a Rust
+server on forge: the TypeScript simulation runs on the server now, behind a
+message contract (inputs in, snapshots out) that forge could slot in behind
+later.
+
 ## Tests and browser automation
 
 42 tests: the original browser suite, sim unit tests, and
@@ -165,7 +199,7 @@ and layout constraints.
 npm run iterate    # both typechecks, vite build, playwright
 ```
 
-Last verified 2026-09-23: 42 passed.
+Last verified 2026-09-23: 43 passed (including two-browser multiplayer).
 
 For screenshots, the Playwright MCP server can hang if the page spams console
 errors (Vite forwards them). A plain `playwright-core` script with

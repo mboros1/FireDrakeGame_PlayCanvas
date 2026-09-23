@@ -15,7 +15,7 @@ import { DrakeSim } from './sim/drake';
 import { Rng } from './sim/random';
 import { Rampage, type RampageEvent } from './sim/rampage';
 import { PropKind, PropState } from './sim/props';
-import { buildVillageLayout } from './sim/village';
+import { buildVillageLayout, drakeSpawn } from './sim/village';
 import type { Input } from './sim/types';
 import { initPaper } from './view/paper';
 import { prewarmVillage, Stage } from './view/stage';
@@ -26,6 +26,9 @@ import { GRADES, PostStack } from './view/post';
 import { Hud } from './view/hud';
 import { Sound } from './view/audio';
 import { assetUrl } from './assets';
+import { Party } from './party';
+import { randomRoomCode } from './net/client';
+import { cleanRoom } from './net/protocol';
 
 type SceneName = 'cave' | 'forest' | 'forestExtract';
 type SavedState = { scene: SceneName; x: number; z: number; yaw: number };
@@ -141,6 +144,9 @@ let cameraPitch: number = TUNING.camera.pitchDegrees;
 let cameraDistance: number = TUNING.camera.distance;
 let targetCameraDistance: number = TUNING.camera.distance;
 let pointerLockRequested = false;
+/** The multiplayer session, when playing together. Null in single player. */
+let party: Party | null = null;
+const SERVER_URL = params.get('server') ?? 'wss://firedrakegame-playcanvas.fly.dev/ws';
 /** Automation: when set, the camera eases round to this yaw. Any mouse look cancels it. */
 let cameraYawTarget: number | null = null;
 let trauma = 0;
@@ -167,7 +173,10 @@ const readInput = (): Input => {
 
 // ── Input ──────────────────────────────────────────────────────────────────
 
+const typing = (event: Event) => (event.target as HTMLElement | null)?.closest?.('input, textarea, button') != null;
+
 window.addEventListener('keydown', event => {
+  if (typing(event)) return;
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault();
   if (event.code === 'KeyM' && !event.repeat) {
     const muted = sound.toggleMute();
@@ -175,7 +184,9 @@ window.addEventListener('keydown', event => {
   }
   if (event.code === 'KeyR' && !event.repeat && sceneName === 'forest' && !transitioning) {
     sound.pageTurn();
-    buildForest();
+    // Together, the room restarts for everyone; the server says when.
+    if (party) party.session.requestRestart();
+    else buildForest();
   }
   keys.add(event.code);
 });
@@ -268,9 +279,14 @@ function buildForest() {
   sceneName = 'forest';
   lightVillage();
   const layout = buildVillageLayout();
-  rampage = new Rampage(simWorld, simRng, drakeSim, layout);
+  // Together, this is a replica of the server's village: same props from the
+  // same layout, dwarves by snapshot, the local drake predicted.
+  rampage = new Rampage(simWorld, simRng, drakeSim, layout, true, party !== null);
   stage.buildVillage(layout, rampage.props);
-  drakeSim.place(simWorld, layout.drakeStart.x, layout.drakeStart.z, layout.drakeStart.yaw);
+  const start = party ? drakeSpawn(layout, Math.max(0, party.seat)) : layout.drakeStart;
+  drakeSim.place(simWorld, start.x, start.z, start.yaw);
+  cameraYaw = start.yaw;
+  party?.onRebuilt();
   hud.setChapter('Chapter the Second', 'In Which Little Kindling Has a Very Bad Day');
   hud.resetRun();
   hud.setMayhemVisible(true);
@@ -363,6 +379,62 @@ async function transitionToForest() {
   await new Promise(resolve => setTimeout(resolve, 450));
   hud.setLoading(false);
   transitioning = false;
+}
+
+/** Join (or open) a room. The cave is skipped: together, you start in the village. */
+function startParty(roomCode: string, name: string) {
+  if (party) party.destroy();
+  const room = cleanRoom(roomCode);
+  try {
+    localStorage.setItem('fire-drake:name', name);
+  } catch {
+    // Private mode: the name just is not remembered.
+  }
+  hud.setLoading(true, `Room ${room}`);
+  party = new Party({
+    app,
+    world,
+    simWorld,
+    drake: drakeSim,
+    drakeView: drake,
+    fx,
+    camera,
+    rampage: () => rampage,
+    rebuild: () => {
+      buildForest();
+      hud.setLoading(false);
+      hud.setChapter('Chapter the Second, Together', `In Which Little Kindling Has Several Very Bad Days`);
+    },
+    events: incoming => events.push(...incoming),
+    status: (status, detail) => {
+      if (status === 'closed' || status === 'full') {
+        hud.setLoading(false);
+        hud.narrateText(detail);
+      }
+    }
+  }, SERVER_URL, room, name);
+}
+
+document.querySelector<HTMLFormElement>('#together-form')?.addEventListener('submit', event => {
+  event.preventDefault();
+  const room = document.querySelector<HTMLInputElement>('#together-room')!.value;
+  const name = document.querySelector<HTMLInputElement>('#together-name')!.value.trim();
+  (document.activeElement as HTMLElement | null)?.blur();
+  hud.openCover();
+  sound.pageTurn();
+  startParty(room, name);
+});
+{
+  const roomInput = document.querySelector<HTMLInputElement>('#together-room');
+  const nameInput = document.querySelector<HTMLInputElement>('#together-name');
+  if (roomInput) roomInput.value = params.get('room') ?? randomRoomCode();
+  if (nameInput) {
+    try {
+      nameInput.value = localStorage.getItem('fire-drake:name') ?? '';
+    } catch {
+      // No storage, no remembered name.
+    }
+  }
 }
 
 const requestedLevel = params.get('level');
@@ -461,6 +533,15 @@ window.__FIRE_DRAKE_DEBUG__ = {
         particles: fx.count
       },
       mayhem: { score: rampage.score, combo: rampage.combo, bestCombo: rampage.bestCombo },
+      net: party ? {
+        status: party.session.status,
+        seat: party.seat,
+        room: party.room,
+        latencyMs: Math.round(party.session.latencyMs),
+        players: party.session.roster.length,
+        remoteDrakes: party.session.roster.length - 1,
+        lastCorrection: party.lastCorrection
+      } : null,
       nearestDwarf: (() => {
         const t = { x: 0, y: 0, z: 0, yaw: 0 };
         let best: { x: number; z: number } | null = null;
@@ -570,6 +651,12 @@ function finishBoot() {
     if (!boot) return;
     boot.classList.add('done');
     setTimeout(() => boot.remove(), 800);
+    // A direct link to a room skips the cover and joins.
+    const room = params.get('room');
+    if (room && !party) {
+      hud.openCover();
+      startParty(room, params.get('name') ?? '');
+    }
   });
 }
 
@@ -583,7 +670,8 @@ app.on('update', (frameDt: number) => {
   hitStop = Math.max(0, hitStop - frameDt);
 
   previousDrake.copy(drake.root.getPosition());
-  rampage.tick(dt, readInput());
+  if (party) party.update(frameDt, elapsed, readInput);
+  else rampage.tick(dt, readInput());
   drake.breathHeld = frameInput.breathing;
   drake.lookTarget = nearestDwarfWithin(14);
   drake.update(simWorld.state, dt, elapsed);
@@ -664,7 +752,7 @@ app.on('update', (frameDt: number) => {
   camera.lookAt(drakePosition.clone().add(new pc.Vec3(0, TUNING.camera.targetHeight, 0)).add(facing.mulScalar(TUNING.camera.lookAhead)));
   post.focusAt(camera.getPosition().distance(drakePosition));
 
-  if (sceneName === 'cave' && drakePosition.z < -38) void transitionToForest();
+  if (sceneName === 'cave' && drakePosition.z < -38 && !party) void transitionToForest();
   if (sceneName === 'forest' && rampage.score >= 2100 && !hud.hasEnded) hud.showTheEnd(rampage.score);
 
   hud.update(frameDt, camera.camera!, rampage.score, rampage.combo, keys.size > 0);

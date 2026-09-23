@@ -112,6 +112,19 @@ export class DrakeSim {
     this.speed = 0;
   }
 
+  /**
+   * Shift the drake without touching its momentum: a network correction, not
+   * a teleport. `place` would zero the speed and stall a charging drake on
+   * every snapshot.
+   */
+  nudge(world: World, dx: number, dz: number, dyaw: number): void {
+    const t = this.scratch;
+    if (!world.state.transform(this.id, t)) return;
+    world.setPosition(this.id, t.x + dx, t.y, t.z + dz);
+    world.setYaw(this.id, t.yaw + dyaw);
+    this.setForwardFromYaw(t.yaw + dyaw);
+  }
+
   private setForwardFromYaw(yaw: number): void {
     const radians = yaw * DEG_TO_RAD;
     this.forwardX = -Math.sin(radians);

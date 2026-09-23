@@ -91,12 +91,20 @@ export class Rampage {
     drake: DrakeSim | null,
     layout?: VillageLayout,
     /** The cave is a prologue: nothing there counts towards mayhem. */
-    private readonly scoring = true
+    private readonly scoring = true,
+    /**
+     * A client's copy of a server's room. It builds the same props from the
+     * same layout, but spawns no dwarves (the server's arrive by snapshot)
+     * and only ever runs {@link predict} for the local drake.
+     */
+    readonly replica = false
   ) {
     if (drake) this.drakes.push(drake);
     this.village = layout !== undefined;
     if (layout) {
       for (const p of layout.props) this.props.push(new PropSim(world, p.kind, p.x, p.z, p.yaw, p.size));
+    }
+    if (layout && !replica) {
       for (let i = 0; i < 6; i++) this.spawnDwarf();
       // A welcoming committee on the road in, so chapter two opens on faces.
       for (let i = 0; i < 3; i++) {
@@ -181,6 +189,18 @@ export class Rampage {
         this.spawnDwarf();
       }
     }
+  }
+
+  /**
+   * Client-side prediction for one drake in a replica: movement and prop
+   * collision only. No scoring, no events, no flattening: the server decides
+   * those, and a drake fast enough to flatten something is let through, since
+   * the server will have flattened it by the time the snapshot lands.
+   */
+  predict(drake: DrakeSim, dt: number, input: Input): void {
+    drake.update(this.world, dt, input);
+    if (!this.world.state.transform(drake.id, this.drakeAt)) return;
+    this.collideDrake(drake, this.drakeAt);
   }
 
   drainEvents(out: RampageEvent[]): void {
@@ -285,6 +305,7 @@ export class Rampage {
       if (distance >= reach) continue;
 
       if (prop.spec.flattenable && prop.state === PropState.Intact && drake.speed > (prop.kind === PropKind.Fence ? LAUNCH_MIN_SPEED : FLATTEN_SPEED)) {
+        if (this.replica) continue;
         if (prop.flatten(this.world)) {
           this.events.push({ type: 'propFlattened', x: prop.x, z: prop.z, kind: prop.kind, ...this.score_(POINTS.propFlattened[prop.kind], drake.player) });
         }
@@ -301,7 +322,7 @@ export class Rampage {
       // `place` zeroes speed; a wall should, but only the part driving into it.
       drake.speed = speed * .35;
       this.world.state.transform(drake.id, at);
-      this.events.push({ type: 'bump', x: at.x, z: at.z, by: drake.player });
+      if (!this.replica) this.events.push({ type: 'bump', x: at.x, z: at.z, by: drake.player });
     }
   }
 

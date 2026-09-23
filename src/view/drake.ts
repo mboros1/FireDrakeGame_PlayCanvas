@@ -72,11 +72,39 @@ export class DrakeView {
     void this.loadModel();
   }
 
+  /**
+   * Draw here instead of at the simulated transform. Multiplayer draws the
+   * predicted drake between fixed prediction steps, plus a decaying
+   * correction offset, so neither the 30 Hz steps nor server corrections
+   * show as jumps.
+   */
+  renderOverride: { x: number; z: number; yaw: number } | null = null;
+
   /** Copy the simulated transform onto the rendered entity. */
   sync(state: WorldState) {
     state.transform(this.sim.id, this.scratch);
+    if (this.renderOverride) {
+      this.scratch.x = this.renderOverride.x;
+      this.scratch.z = this.renderOverride.z;
+      this.scratch.yaw = this.renderOverride.yaw;
+    }
     this.root.setPosition(this.scratch.x, this.scratch.y, this.scratch.z);
     this.root.setEulerAngles(0, this.scratch.yaw, 0);
+  }
+
+  private tint: [number, number, number] = [1, 1, 1];
+
+  /** Recolour the hide, for telling players' drakes apart. */
+  setTint(rgb: readonly [number, number, number]) {
+    this.tint = [rgb[0], rgb[1], rgb[2]];
+    if (this.material) {
+      this.material.diffuse.set(rgb[0], rgb[1], rgb[2]);
+      this.material.update();
+    }
+  }
+
+  destroy() {
+    this.root.destroy();
   }
 
   update(state: WorldState, dt: number, elapsed: number) {
@@ -242,6 +270,7 @@ export class DrakeView {
       material.gloss = .45;
       material.sheen = new pc.Color(.5, .2, .1);
       material.cull = pc.CULLFACE_NONE;
+      material.diffuse.set(this.tint[0], this.tint[1], this.tint[2]);
       material.update();
       this.material = material;
 

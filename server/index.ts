@@ -1,7 +1,7 @@
 /**
  * Fire Drake room server.
  *
- *   npm run server:dev          # build and run locally on :8080
+ *   npm run server:dev          # build and run locally on :8787
  *   fly deploy                  # ship it (see fly.toml)
  *
  * One HTTP port. `GET /` is a health check; `/ws?room=<name>&name=<player>`

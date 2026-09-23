@@ -15,7 +15,7 @@
     "record": "node scripts/record-gameplay.mjs",
     "package:itch": "node scripts/package-itch.mjs",
     "server:build": "tsc --noEmit -p server/tsconfig.json && vite build --config server/vite.config.ts",
-    "server:dev": "npm run server:build && node dist-server/index.js"
+    "server:dev": "npm run server:build && PORT=8787 node dist-server/index.js"
   },
   "dependencies": {
     "playcanvas": "2.21.0",

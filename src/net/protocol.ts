@@ -61,8 +61,12 @@ const clampUnit = (v: number) => (Number.isFinite(v) ? Math.max(-1, Math.min(1, 
 
 // ── Server → client ─────────────────────────────────────────────────────────
 
-/** [player, x, z, yaw, speed, flags] — flags: 1 breathed this tick, 2 breathing held. */
-export type DrakeRow = [number, number, number, number, number, number];
+/**
+ * [player, x, z, yaw, speed, flags, ack] — flags: 1 breathed this tick,
+ * 2 breathing held. `ack` is the last input sequence number the server had
+ * applied for that player, which the owning client uses to reconcile.
+ */
+export type DrakeRow = [number, number, number, number, number, number, number];
 /** [id, x, y, z, yaw, burn, bits, spin, launches] — bits: 1 airborne, 2 stunned. */
 export type DwarfRow = [number, number, number, number, number, number, number, number, number];
 /** [prop index, state, burnElapsed] — only props that are not intact. */

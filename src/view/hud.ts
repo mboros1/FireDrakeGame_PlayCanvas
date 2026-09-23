@@ -125,7 +125,11 @@ export class Hud {
   private idle = 0;
 
   constructor() {
-    const dismiss = () => this.openCover();
+    // The "play together" form lives on the cover; using it must not open the book.
+    const dismiss = (event: Event) => {
+      if ((event.target as HTMLElement | null)?.closest?.('.cover-together')) return;
+      this.openCover();
+    };
     window.addEventListener('keydown', dismiss);
     window.addEventListener('pointerdown', dismiss);
   }
@@ -186,6 +190,14 @@ export class Hud {
   setLoading(visible: boolean, line = '') {
     if (line) this.loading.querySelector('.page-text')!.textContent = line;
     this.loading.classList.toggle('visible', visible);
+  }
+
+  /** Narrate a specific line, not one from a pool: status and news. */
+  narrateText(line: string) {
+    this.typing = { text: line, shown: 0 };
+    this.narrationCooldown = 3;
+    this.narrationTimer = 6 + line.length * .03;
+    this.narrator.classList.add('visible');
   }
 
   narrate(key: keyof typeof LINES | string, force = false) {

@@ -14,7 +14,7 @@ import { World } from '../src/sim/world';
 import { Rng } from '../src/sim/random';
 import { DrakeSim } from '../src/sim/drake';
 import { Rampage, type RampageEvent } from '../src/sim/rampage';
-import { buildVillageLayout, type VillageLayout } from '../src/sim/village';
+import { buildVillageLayout, drakeSpawn, type VillageLayout } from '../src/sim/village';
 import { NO_INPUT, type Input, type Transform } from '../src/sim/types';
 import {
   cm,
@@ -48,7 +48,18 @@ type Player = {
   input: Input;
   lastSeen: number;
   inputBudget: number;
+  /** Highest input sequence number applied, echoed so the client can reconcile. */
+  ack: number;
+  /** Inputs received but not yet applied, oldest first: one per tick. */
+  queue: { seq: number; input: Input }[];
 };
+
+/**
+ * Inputs are applied one per tick, in order, exactly as the client applied
+ * them when predicting. If a client falls behind (a stall, a burst), the
+ * backlog is trimmed so input latency cannot grow without bound.
+ */
+const MAX_QUEUED_INPUTS = 4;
 
 export class Room {
   private world = new World();
@@ -82,7 +93,7 @@ export class Room {
     while (taken.has(seat)) seat++;
     const name = (requestedName || '').replace(/[^\p{L}\p{N} _-]/gu, '').slice(0, 16) || `Drake ${seat + 1}`;
     const drake = this.spawnDrake(seat);
-    this.players.set(socket, { socket, seat, name, drake, input: { ...NO_INPUT }, lastSeen: Date.now(), inputBudget: MAX_INPUTS_PER_SECOND });
+    this.players.set(socket, { socket, seat, name, drake, input: { ...NO_INPUT }, lastSeen: Date.now(), inputBudget: MAX_INPUTS_PER_SECOND, ack: -1, queue: [] });
     send(socket, { t: 'welcome', v: PROTOCOL_VERSION, player: seat, colour: seat, room: this.name, seed: this.seed, tickHz: SERVER_TICK_HZ });
     this.broadcastRoster();
     if (!this.timer) this.timer = setInterval(() => this.step(), 1000 / SERVER_TICK_HZ);
@@ -111,7 +122,10 @@ export class Room {
       case 'input':
         if (player.inputBudget <= 0) return;
         player.inputBudget--;
-        decodeInput(message, player.input);
+        // Out-of-order or duplicate inputs are stale.
+        if (message.seq <= (player.queue.at(-1)?.seq ?? player.ack)) return;
+        player.queue.push({ seq: message.seq, input: decodeInput(message, { ...NO_INPUT }) });
+        while (player.queue.length > MAX_QUEUED_INPUTS) player.queue.shift();
         break;
       case 'restart':
         this.restart();
@@ -125,10 +139,8 @@ export class Room {
   }
 
   private spawnDrake(seat: number) {
-    // Side by side on the road into the village.
-    const start = this.layout.drakeStart;
-    const offset = [0, -4, 4, -8][seat] ?? 0;
-    const drake = new DrakeSim(this.world, start.x + offset, start.z + Math.abs(offset) * .4, start.yaw, seat);
+    const start = drakeSpawn(this.layout, seat);
+    const drake = new DrakeSim(this.world, start.x, start.z, start.yaw, seat);
     this.rampage.addDrake(drake);
     return drake;
   }
@@ -139,7 +151,10 @@ export class Room {
     this.rng = new Rng(this.seed);
     this.layout = buildVillageLayout();
     this.rampage = new Rampage(this.world, this.rng, null, this.layout, true);
-    for (const player of this.players.values()) player.drake = this.spawnDrake(player.seat);
+    for (const player of this.players.values()) {
+      player.drake = this.spawnDrake(player.seat);
+      player.queue.length = 0;
+    }
     this.pending = [];
     this.tick = 0;
     this.broadcast({ t: 'restart', seed: this.seed });
@@ -158,7 +173,15 @@ export class Room {
     if (this.players.size === 0) return;
 
     const bySeat = new Map<number, Input>();
-    for (const player of this.players.values()) bySeat.set(player.seat, player.input);
+    for (const player of this.players.values()) {
+      // One queued input per tick; with none queued, the last one holds.
+      const next = player.queue.shift();
+      if (next) {
+        player.input = next.input;
+        player.ack = next.seq;
+      }
+      bySeat.set(player.seat, player.input);
+    }
     this.rampage.tick(TICK, drake => bySeat.get(drake.player) ?? NO_INPUT);
     this.rampage.drainEvents(this.pending);
     this.tick++;
@@ -167,11 +190,12 @@ export class Room {
 
   private snapshot(inputs: Map<number, Input>) {
     const rampage = this.rampage;
+    const acks = new Map([...this.players.values()].map(p => [p.seat, p.ack]));
     const drakes: DrakeRow[] = [];
     for (const drake of rampage.drakes) {
       if (!this.world.state.transform(drake.id, this.at)) continue;
       const held = inputs.get(drake.player)?.breathing ?? false;
-      drakes.push([drake.player, cm(this.at.x), cm(this.at.z), deg(this.at.yaw), cm(drake.speed), (drake.breathed ? 1 : 0) | (held ? 2 : 0)]);
+      drakes.push([drake.player, cm(this.at.x), cm(this.at.z), deg(this.at.yaw), cm(drake.speed), (drake.breathed ? 1 : 0) | (held ? 2 : 0), acks.get(drake.player) ?? -1]);
     }
     const dwarves: DwarfRow[] = [];
     for (const dwarf of rampage.dwarves) {

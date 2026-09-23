@@ -127,3 +127,13 @@ export const buildVillageLayout = (seed = 0x5eed): VillageLayout => {
 
   return { props, paths, pond, drakeStart };
 };
+
+/**
+ * Where seat `seat` enters the village: side by side on the road in. Shared
+ * by the server, which spawns there, and the client, which must predict from
+ * exactly the same spot.
+ */
+export const drakeSpawn = (layout: VillageLayout, seat: number) => {
+  const offset = [0, -4, 4, -8][seat] ?? 0;
+  return { x: layout.drakeStart.x + offset, z: layout.drakeStart.z + Math.abs(offset) * .4, yaw: layout.drakeStart.yaw };
+};
