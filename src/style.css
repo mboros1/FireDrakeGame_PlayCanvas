@@ -805,3 +805,12 @@ body.touch #stats { display: none; }
   .end-stats { gap: 2px 14px; margin-bottom: 10px; }
 }
 body.touch .together-row input { font-size: 16px; }
+
+.cover-version {
+  position: absolute;
+  right: 18px;
+  bottom: 10px;
+  font: 10px ui-monospace, monospace;
+  color: rgba(243, 217, 164, .45);
+}
+.cover-board { position: relative; }

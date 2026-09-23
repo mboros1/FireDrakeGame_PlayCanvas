@@ -76,6 +76,16 @@ export class PostStack {
     this.apply(GRADES.village);
   }
 
+  /** Drop the expensive passes, for a device discovered to be a phone. */
+  setQuality(quality: 'high' | 'low') {
+    if (quality === 'low') {
+      this.frame.ssao.type = 'none';
+      this.frame.dof.enabled = false;
+      this.frame.rendering.samples = 1;
+      this.frame.update();
+    }
+  }
+
   apply(grade: Grade) {
     const f = this.frame;
     f.bloom.intensity = grade.bloom;

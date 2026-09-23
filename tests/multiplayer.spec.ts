@@ -58,7 +58,12 @@ test('two drakes share one village', async ({ browser }) => {
   // Prediction matches the server closely: no rubber-banding.
   expect(after.net!.lastCorrection).toBeLessThan(1);
   await expect.poll(async () => (await state(b.page)).mayhem.score).toBeGreaterThan(0);
-  await expect.poll(async () => (await state(b.page)).mayhem.score).toBe((await state(a.page)).mayhem.score);
+  // Fire keeps spreading, so the score keeps moving: both sides must agree at
+  // some instant, not match a value read once.
+  await expect.poll(async () => {
+    const [x, y] = await Promise.all([state(a.page), state(b.page)]);
+    return x.mayhem.score === y.mayhem.score;
+  }).toBe(true);
 
   await b.page.screenshot({ path: 'test-results/visual/05-multiplayer-watcher.png' });
   expect(a.errors).toEqual([]);

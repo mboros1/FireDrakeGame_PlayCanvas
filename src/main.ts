@@ -68,6 +68,10 @@ declare global {
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 const params = new URLSearchParams(window.location.search);
 const touch = isTouchDevice();
+{
+  const stamp = document.querySelector('#cover-version');
+  if (stamp) stamp.textContent = `build ${__BUILD_VERSION__}${touch ? ' · touch' : ''}`;
+}
 // Automated runs and phones get the cheap pipeline: same game, fewer passes.
 const quality = (params.get('quality') ?? (navigator.webdriver || touch ? 'low' : 'high')) as 'high' | 'low';
 
@@ -201,16 +205,29 @@ function restartChapter() {
   else buildForest();
 }
 
-/** Touch controls exist only on touch devices; the keyboard path is untouched. */
-const touchControls = touch
-  ? new TouchControls(() => hud.openCover(), {
+/**
+ * Touch controls exist only on touch devices; the keyboard path is untouched.
+ * Detection at load can be wrong (some phones report a fine pointer, some
+ * embeds report none), so the first real touch also switches them on.
+ */
+let touchControls: TouchControls | null = null;
+function enableTouch() {
+  if (touchControls) return;
+  touchControls = new TouchControls(() => hud.openCover(), {
     mute: () => {
       const muted = sound.toggleMute();
       hud.pop(muted ? 'shh.' : '♪', scratch.copy(drake.root.getPosition()).add(new pc.Vec3(0, 3, 0)), 'shout', 1);
     },
     restart: () => restartChapter()
-  })
-  : null;
+  });
+  // A phone discovered late still gets the phone pipeline.
+  if (!params.get('quality')) {
+    post.setQuality('low');
+    app.graphicsDevice.maxPixelRatio = Math.min(window.devicePixelRatio, 1.5);
+  }
+}
+if (touch) enableTouch();
+else window.addEventListener('touchstart', () => enableTouch(), { once: true, passive: true });
 
 canvas.addEventListener('pointerdown', event => {
   // Pointer lock is a mouse idea; fingers look with the right thumb.

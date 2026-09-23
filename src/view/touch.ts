@@ -23,10 +23,18 @@ const DEADZONE = .12;
 /** Degrees of camera turn per CSS pixel dragged. */
 const LOOK_SENSITIVITY = .32;
 
-export const isTouchDevice = () =>
-  typeof window !== 'undefined' &&
-  (window.matchMedia?.('(pointer: coarse)').matches || navigator.maxTouchPoints > 0) &&
-  !window.matchMedia?.('(pointer: fine)').matches;
+/**
+ * Is the primary way of playing a finger? True for phones and tablets. A
+ * laptop with a touchscreen reports a fine primary pointer and a hover
+ * capability, and keeps the keyboard layout until it is actually touched.
+ */
+export const isTouchDevice = () => {
+  if (typeof window === 'undefined') return false;
+  const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+  const noHover = window.matchMedia?.('(hover: none)').matches ?? false;
+  const touchPoints = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
+  return coarse || (touchPoints && noHover);
+};
 
 export class TouchControls {
   /** -1..1, camera-relative, like W/S and A/D. */
