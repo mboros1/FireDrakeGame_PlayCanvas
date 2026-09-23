@@ -129,6 +129,28 @@ root-motion offset baked into the wrong space; `DrakeView` zeroes that bone's
 translation after the anim system runs. The idle clip has the drake glance
 back over its shoulder, and that is kept on purpose.
 
+**Grounding:** the model offset in `tuning.ts` is measured from the bind pose,
+where the wing tips hang lowest. The animated drake stands on its feet and
+wing-knuckles more than a metre higher, so it used to float. `DrakeView`
+now plants the lowest contact bone (feet or wing-finger knuckles, each with
+a sole thickness from `DRAKE_SOLE` in `tuning.ts`) on the ground every frame
+after the anim system runs.
+
+**Procedural layer** (`src/view/rig.ts`), applied over the clips each frame:
+- the neck and head aim along the heading while breathing or charging (the
+  idle clip looks back over its shoulder; fire must not);
+- the jaw gapes and chomps while breathing;
+- the wings flare on a charge;
+- a gallop bound and spine pitch while charging, and slow idle breathing;
+- the tail lags on a spring through turns;
+- head recoil on impacts;
+- the head tracks the nearest dwarf within 14 m.
+
+Bone-local axes are inconsistent in this rig, so the layer uses two
+pose-independent operations only: bend a bone toward or away from up
+relative to its child, and turn about world up. The debug API gains
+`poseBone`, `boneLocal` and `setCamera` for this work.
+
 `public/assets/forest-sector/` holds the archived extraction (20 GLBs plus
 manifest).
 
@@ -172,9 +194,11 @@ assets already exported. `docs/ARCHITECTURE.md` records the full reasoning.
    ground is flat, and launched dwarves are ballistic arcs rather than
    ragdolls. See the Rapier discussion in the conversation log. The
    architecture still says forge.
-2. **Only idle and walk clips exist.** There is no breath, pounce or hurt
-   pose. New clips are best authored with headless Blender scripts
-   (`/Applications/Blender.app/Contents/MacOS/Blender -b -P ...`).
+2. **Only idle and walk clips exist.** The procedural layer covers breath,
+   charge, recoil and looking. A real run cycle, pounce or hurt reaction
+   would still need clips; headless Blender scripts
+   (`/Applications/Blender.app/Contents/MacOS/Blender -b -P ...`) are the
+   route.
 3. Dwarves are small at a distance (1.3 m against a 116 m field). The
    greeters near the drake's start help.
 4. Google Fonts (IM Fell English) load from the network; offline falls back

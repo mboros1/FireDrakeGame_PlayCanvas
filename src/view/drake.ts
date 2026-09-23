@@ -7,8 +7,9 @@
  */
 
 import * as pc from 'playcanvas';
-import { TUNING } from '../tuning';
+import { DRAKE_SOLE, TUNING } from '../tuning';
 import type { DrakeSim } from '../sim/drake';
+import { DrakeRig } from './rig';
 import type { Transform, WorldState } from '../sim/types';
 
 export const loadAsset = (app: pc.AppBase, url: string, type: string) =>
@@ -32,6 +33,14 @@ export class DrakeView {
   private readonly placeholder = new pc.Entity('Loading Drake');
   private anim: pc.AnimComponent | null = null;
   private rootBone: pc.GraphNode | null = null;
+  private rig: DrakeRig | null = null;
+  private readonly forward = new pc.Vec3();
+  /** Bones that can touch the ground, each with how far the mesh reaches below it. */
+  private contacts: { node: pc.GraphNode; sole: number }[] = [];
+  private groundOffset = 0;
+  private grounded = false;
+  /** Debug: extra local rotations applied on top of the animation, by bone. */
+  readonly poseOverrides = new Map<string, pc.Vec3>();
   private clip: Clip | null = null;
   private material: pc.StandardMaterial | null = null;
   private readonly mouthLight = new pc.Entity('Mouth glow');
@@ -96,6 +105,12 @@ export class DrakeView {
         const p = this.rootBone.getLocalPosition();
         this.rootBone.setLocalPosition(p.x, 0, 0);
       }
+      if (this.rig) {
+        this.forward.set(this.sim.forwardX, 0, this.sim.forwardZ);
+        this.rig.update(dt, elapsed, this.forward, this.scratch.yaw, this.sim.breathed || this.breathHeld, speed > TUNING.drake.walkSpeed + 1, speed, this.lookTarget);
+      }
+      this.applyPoseOverrides();
+      this.plantFeet(dt);
     }
 
     this.breathGlow = pc.math.lerp(this.breathGlow, this.sim.breathed ? 1 : 0, Math.min(1, dt * (this.sim.breathed ? 30 : 6)));
@@ -106,6 +121,46 @@ export class DrakeView {
     }
   }
 
+  private applyPoseOverrides() {
+    if (this.poseOverrides.size === 0) return;
+    const model = this.visual.findByName('Actual Fire Drake');
+    for (const [name, euler] of this.poseOverrides) {
+      const node = model?.findByName(name);
+      if (!node) continue;
+      node.setLocalRotation(node.getLocalRotation().clone().mul(new pc.Quat().setFromEulerAngles(euler.x, euler.y, euler.z)));
+    }
+  }
+
+  /**
+   * Ground the animated pose. The model offset in `tuning.ts` is measured from
+   * the bind pose, where the wing tips hang lowest; the animated drake stands
+   * on its feet and wing-knuckles instead, a metre and more higher. Every
+   * frame, find the lowest contact and move the visual so it rests on the
+   * ground. The first frame snaps; after that it eases, so a foot swap reads
+   * as weight shifting rather than a pop.
+   */
+  private plantFeet(dt: number) {
+    if (this.contacts.length === 0) return;
+    let lowest = Infinity;
+    for (const { node, sole } of this.contacts) lowest = Math.min(lowest, node.getPosition().y - sole);
+    const error = this.root.getPosition().y - lowest;
+    this.groundOffset += this.grounded ? error * Math.min(1, dt * 18) : error;
+    this.grounded = true;
+    const p = this.visual.getLocalPosition();
+    this.visual.setLocalPosition(p.x, this.groundOffset, p.z);
+  }
+
+  /** Something worth watching, in world space, or null. The rig's head tracks it. */
+  lookTarget: pc.Vec3 | null = null;
+
+  /** True while the player holds breath, between the sim's rate-limited puffs. */
+  breathHeld = false;
+
+  /** A big collision: let the rig react. */
+  impact(strength: number) {
+    this.rig?.impact(strength);
+  }
+
   /** World-space mouth, from the live jaw bones once the model is in. */
   mouthPosition(out: pc.Vec3) {
     if (this.mouthNodes.length > 0) {
@@ -114,6 +169,23 @@ export class DrakeView {
       return out.mulScalar(1 / this.mouthNodes.length);
     }
     return out.copy(this.root.getPosition()).add(new pc.Vec3(this.sim.forwardX * 2.8, 1.5, this.sim.forwardZ * 2.8));
+  }
+
+  /** A bone's position in the drake's own frame: +x right, +y up, -z forward. */
+  boneLocal(name: string) {
+    const node = this.visual.findByName('Actual Fire Drake')?.findByName(name);
+    if (!node) return null;
+    const inverse = this.root.getWorldTransform().clone().invert();
+    const p = inverse.transformPoint(node.getPosition());
+    return [p.x, p.y, p.z];
+  }
+
+  /** World heights of named bones, for the debug surface and grounding work. */
+  boneHeights(names: string[]) {
+    const out: Record<string, number | null> = {};
+    const model = this.visual.findByName('Actual Fire Drake');
+    for (const name of names) out[name] = model?.findByName(name)?.getPosition().y ?? null;
+    return out;
   }
 
   /** Rendered bounds, for the debug surface: catches a drake that animates off-screen. */
@@ -206,6 +278,17 @@ export class DrakeView {
       anim.assignAnimation('Run', track(walk));
       anim.baseLayer!.play('Idle');
       this.rootBone = model.findByName('spine_004_04');
+      this.rig = DrakeRig.from(model);
+      if (!this.rig) console.warn('Fire Drake rig bones not found; procedural animation disabled.');
+      const contact = (name: string, sole: number) => {
+        const node = model.findByName(name);
+        if (node) this.contacts.push({ node, sole });
+      };
+      contact('foot_L_0146', DRAKE_SOLE.foot);
+      contact('foot_R_0150', DRAKE_SOLE.foot);
+      for (const finger of ['f_middle_03_L_094', 'f_middle_03_R_0124', 'f_index_03_L_098', 'f_index_03_R_0128', 'f_ring_03_L_090', 'f_ring_03_R_0120']) {
+        contact(finger, DRAKE_SOLE.knuckle);
+      }
       this.clip = 'Idle';
       this.anim = anim;
     } catch (error) {

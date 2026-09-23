@@ -102,3 +102,14 @@ export const socketToLocal = (socket: readonly [number, number, number]) => {
 
 /** Rest-pose breath origin, in drake-local space. Unreal's `MouthSocket`. */
 export const MOUTH_LOCAL = socketToLocal(WYVERN_MODEL.sockets.mouth);
+
+/**
+ * How far the drake's mesh reaches below its contact bones, in metres. The
+ * view plants the lowest contact on the ground every frame; these are the
+ * sole of the foot below the ankle bone and the knuckle below the last
+ * wing-finger bone. Tuned by eye from a ground-level side view.
+ */
+export const DRAKE_SOLE = {
+  foot: 0.1,
+  knuckle: 0.05
+} as const;

@@ -52,6 +52,9 @@ declare global {
       loadScene: (name: SceneName) => void;
       resetCamera: () => void;
       lookAt: (x: number, z: number) => void;
+      poseBone: (name: string, x: number, y: number, z: number) => void;
+      boneLocal: (name: string) => number[] | null;
+      setCamera: (yaw: number, pitch: number, distance: number) => void;
       nearest: (kind: 'dwarf' | 'cottage' | 'haystack' | 'stall' | 'maypole' | 'tree' | 'fence') => { x: number; z: number; distance: number } | null;
     };
   }
@@ -382,6 +385,7 @@ function handleEvent(event: RampageEvent) {
       trauma = Math.min(1, trauma + .08 * near);
       break;
     case 'dwarfLaunched':
+      drake.impact(.25);
       sound.boing();
       fx.burst(scratch.clone().add(new pc.Vec3(0, .6, 0)), 14);
       trauma = Math.min(1, trauma + .35);
@@ -402,13 +406,17 @@ function handleEvent(event: RampageEvent) {
       }
       break;
     case 'propFlattened':
+      drake.impact(event.kind === PropKind.Cottage ? .9 : .35);
       sound.crumple(event.kind === PropKind.Cottage ? 1.6 : .7);
       fx.burst(scratch.clone().add(new pc.Vec3(0, .5, 0)), event.kind === PropKind.Cottage ? 30 : 10);
       trauma = Math.min(1, trauma + (event.kind === PropKind.Cottage ? .6 : .2));
       hitStop = event.kind === PropKind.Cottage ? .1 : .04;
       break;
     case 'bump':
-      if (drakeSim.speed > 4) trauma = Math.min(1, trauma + .1);
+      if (drakeSim.speed > 4) {
+        trauma = Math.min(1, trauma + .1);
+        drake.impact(.5);
+      }
       break;
     default:
       break;
@@ -442,7 +450,8 @@ window.__FIRE_DRAKE_DEBUG__ = {
         rotation: { ...TUNING.drake.modelRotation },
         offset: { ...TUNING.drake.modelOffset },
         forwardAlignment: drake.getVisualForwardAlignment(drakeYaw()),
-        bounds: drake.bounds()
+        bounds: drake.bounds(),
+        contacts: drake.boneHeights(['foot_L_0146', 'foot_R_0150', 'shin_L_0145', 'f_middle_03_L_094', 'f_middle_03_R_0124', 'hand_L_086', 'hand_R_0116', 'spine_004_04'])
       },
       effects: {
         breathParticles: fx.countOf('breath'),
@@ -473,6 +482,17 @@ window.__FIRE_DRAKE_DEBUG__ = {
     if (name === 'forestExtract') void buildExtractedForestSector();
     else if (name === 'forest') buildForest();
     else buildCave();
+  },
+  poseBone: (name, x, y, z) => {
+    if (x === 0 && y === 0 && z === 0) drake.poseOverrides.delete(name);
+    else drake.poseOverrides.set(name, new pc.Vec3(x, y, z));
+  },
+  boneLocal: name => drake.boneLocal(name),
+  setCamera: (yaw, pitch, distance) => {
+    cameraYawTarget = null;
+    cameraYaw = yaw;
+    cameraPitch = pitch;
+    cameraDistance = targetCameraDistance = distance;
   },
   lookAt: (x, z) => {
     const at = drake.root.getPosition();
@@ -505,6 +525,25 @@ window.__FIRE_DRAKE_DEBUG__ = {
   }
 };
 
+const lookScratch = new pc.Vec3();
+const lookTransform = { x: 0, y: 0, z: 0, yaw: 0 };
+/** The closest dwarf within `range` of the drake, for the head to watch. */
+function nearestDwarfWithin(range: number): pc.Vec3 | null {
+  const at = drake.root.getPosition();
+  let best = range;
+  let found = false;
+  for (const dwarf of rampage.dwarves) {
+    if (dwarf.dead || !simWorld.state.transform(dwarf.id, lookTransform)) continue;
+    const distance = Math.hypot(lookTransform.x - at.x, lookTransform.z - at.z);
+    if (distance < best) {
+      best = distance;
+      lookScratch.set(lookTransform.x, lookTransform.y + 1, lookTransform.z);
+      found = true;
+    }
+  }
+  return found ? lookScratch : null;
+}
+
 function drakeYaw() {
   const t = { x: 0, y: 0, z: 0, yaw: 0 };
   simWorld.state.transform(drakeSim.id, t);
@@ -521,6 +560,8 @@ app.on('update', (frameDt: number) => {
 
   previousDrake.copy(drake.root.getPosition());
   rampage.tick(dt, readInput());
+  drake.breathHeld = frameInput.breathing;
+  drake.lookTarget = nearestDwarfWithin(14);
   drake.update(simWorld.state, dt, elapsed);
 
   // Breath presentation.
