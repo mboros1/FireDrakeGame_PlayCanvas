@@ -77,11 +77,28 @@ Flow:
   crackle, and a Dorian music box. There are no audio files.
 - `/?level=extracted` still loads the archived Unreal forest extraction.
 
+## Levels are data
+
+Levels are JSON files in `src/levels/` (format 1: props with named kinds,
+paths, optional pond, one spawn per seat), validated by `validateLevel` in
+`src/sim/level.ts`, which treats every level as untrusted input and names
+every problem. `src/sim/levels.ts` is the registry, bundled into client and
+server and validated at startup; the server names a room's level in
+`welcome`. `generateVillage` (`src/sim/village.ts`) is now only a tool:
+`npm run levels:export` rewrites `little-kindling.json` from it. This is the
+foundation for the level editor and for levels stored on the server.
+
 ## Architecture (as built today)
 
-- `src/main.ts`: wiring only. It owns the app, input, camera (follow, shake,
-  charge FOV kick, hit-stop), scene loading, the frame loop and
-  `window.__FIRE_DRAKE_DEBUG__`.
+- `src/main.ts`: composition, chapter switching and the frame loop (~440
+  lines).
+- `src/game/`: `camera.ts` (CameraRig: orbit, zoom, FOV kick, shake,
+  automation aim), `input.ts` (Controls: keyboard, mouse and touch into one
+  Input), `lighting.ts`, `presenter.ts` (events into sound, fx, shake,
+  hit-stop), `extracted.ts`, and `debug.ts` (`window.__FIRE_DRAKE_DEBUG__`).
+- `src/telemetry.ts`: errors and a session summary to the server's
+  `/report`, read with `fly logs | grep report`. Off with `?telemetry=0` and
+  in automated runs unless `?telemetry=1`.
 - `src/sim/`: PlayCanvas-free and deterministic (seeded `Rng`, no
   `Math.random`).
   - `drake.ts`, `dwarf.ts`: locomotion. Dwarves flee, get launched, bounce
@@ -202,7 +219,13 @@ Branch `multiplayer`. Up to four drakes per room, co-op, server-authoritative.
   the local IPFS gateway), then open
   `/?room=test&server=ws://127.0.0.1:8787/ws` in two tabs.
 - `tests/multiplayer.spec.ts` runs two browsers against a local server
-  (Playwright starts it).
+  (Playwright starts it), including a dropped connection that rejoins, and
+  an outdated client that is refused.
+- **Resilience:** the protocol version (now 2) goes in the connect URL, and
+  a mismatch closes with 4002 so stale pages say "refresh". Clients
+  reconnect with backoff (0.5 to 15 s). The server heartbeats sockets every
+  15 s, caps rooms at 200 and connections at 8 per IP, and its tick counts
+  wall-clock time so a late timer cannot slow the game.
 
 This is a deliberate detour from `docs/ARCHITECTURE.md`, which plans a Rust
 server on forge: the TypeScript simulation runs on the server now, behind a
@@ -220,7 +243,9 @@ and layout constraints.
 npm run iterate    # both typechecks, vite build, playwright
 ```
 
-Last verified 2026-09-23: 44 passed (including two-browser multiplayer and phone touch).
+Last verified 2026-09-23: 56 passed locally. CI (`.github/workflows/ci.yml`)
+runs the typechecks, both builds and `npm run test:headless` (50 tests
+needing no drake asset) on every push.
 
 For screenshots, the Playwright MCP server can hang if the page spams console
 errors (Vite forwards them). A plain `playwright-core` script with
