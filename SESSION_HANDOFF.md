@@ -154,6 +154,15 @@ relative to its child, and turn about world up. The debug API gains
 `public/assets/forest-sector/` holds the archived extraction (20 GLBs plus
 manifest).
 
+## Publishing
+
+- **itch.io:** `npm run publish:itch` packages the build (only the six
+  runtime drake files) and pushes it with butler to
+  `thedudemanguyfriend/firedrake`, channel `html5`. Butler is installed at
+  `~/.local/bin/butler` (the Homebrew `butler` cask is an unrelated app) and
+  is logged in. Its key only covers uploads.
+- **Room server:** `fly deploy --ha=false` (see Multiplayer).
+
 ## Multiplayer
 
 Branch `multiplayer`. Up to four drakes per room, co-op, server-authoritative.
