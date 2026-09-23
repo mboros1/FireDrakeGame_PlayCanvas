@@ -5,7 +5,8 @@ import { DrakeSim } from '../src/sim/drake';
 import { DwarfSim } from '../src/sim/dwarf';
 import { PropKind, PropSim, PropState } from '../src/sim/props';
 import { Rampage, type RampageEvent } from '../src/sim/rampage';
-import { buildVillageLayout } from '../src/sim/village';
+import { getLevel } from '../src/sim/levels';
+import { spawnFor } from '../src/sim/level';
 import { NO_INPUT, type Input, type Transform } from '../src/sim/types';
 
 const TICK = 1 / 60;
@@ -128,8 +129,9 @@ test('the village is deterministic: same seed and inputs, same outcome', () => {
   const play = () => {
     const world = new World();
     const rng = new Rng(99);
-    const layout = buildVillageLayout();
-    const drake = new DrakeSim(world, layout.drakeStart.x, layout.drakeStart.z, 0);
+    const layout = getLevel();
+    const start = spawnFor(layout, 0);
+    const drake = new DrakeSim(world, start.x, start.z, 0);
     const rampage = new Rampage(world, rng, drake, layout);
     const moves: Input[] = [
       input({ forward: 1 }),
@@ -149,8 +151,9 @@ test('the village is deterministic: same seed and inputs, same outcome', () => {
 });
 
 test('the village layout keeps the drake start and the pond clear', () => {
-  const layout = buildVillageLayout();
-  const { drakeStart, pond } = layout;
+  const layout = getLevel();
+  const drakeStart = spawnFor(layout, 0);
+  const pond = layout.pond!;
   for (const prop of layout.props) {
     expect(Math.hypot(prop.x - drakeStart.x, prop.z - drakeStart.z)).toBeGreaterThan(5);
     expect(Math.hypot(prop.x - pond[0], prop.z - pond[1])).toBeGreaterThan(pond[2]);

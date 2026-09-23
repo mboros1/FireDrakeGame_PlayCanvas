@@ -43,6 +43,8 @@ export class NetSession {
   status: NetStatus = 'connecting';
   player = -1;
   room = '';
+  /** The level the room is playing, from the server. */
+  level = '';
   roster: PlayerInfo[] = [];
   latencyMs = 0;
 
@@ -184,6 +186,7 @@ export class NetSession {
       case 'welcome':
         this.player = message.player;
         this.room = message.room;
+        this.level = message.level;
         this.onWelcome();
         break;
       case 'roster':
@@ -196,6 +199,7 @@ export class NetSession {
       case 'restart':
         this.buffer.length = 0;
         this.history.clear();
+        this.level = message.level;
         this.onRestart();
         break;
       case 'pong':

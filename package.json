@@ -16,7 +16,8 @@
     "package:itch": "node scripts/package-itch.mjs",
     "server:build": "tsc --noEmit -p server/tsconfig.json && vite build --config server/vite.config.ts",
     "server:dev": "npm run server:build && PORT=8787 node dist-server/index.js",
-    "publish:itch": "npm run package:itch && butler push release/fire-drake-itch.zip thedudemanguyfriend/firedrake:html5 --userversion \"$(git describe --always --dirty)\""
+    "publish:itch": "npm run package:itch && butler push release/fire-drake-itch.zip thedudemanguyfriend/firedrake:html5 --userversion \"$(git describe --always --dirty)\"",
+    "levels:export": "vite build --ssr scripts/export-levels.ts --outDir .levels-tmp --emptyOutDir && node .levels-tmp/export-levels.js && rm -rf .levels-tmp"
   },
   "dependencies": {
     "playcanvas": "2.21.0",

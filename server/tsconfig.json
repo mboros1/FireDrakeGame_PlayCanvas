@@ -6,7 +6,16 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "resolveJsonModule": true
   },
-  "include": ["./**/*.ts", "../src/sim/**/*.ts", "../src/net/**/*.ts", "../src/tuning.ts", "../src/generated/**/*.ts"]
+  "include": [
+    "./**/*.ts",
+    "../src/sim/**/*.ts",
+    "../src/net/**/*.ts",
+    "../src/tuning.ts",
+    "../src/generated/**/*.ts"
+  ]
 }

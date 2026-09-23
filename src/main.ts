@@ -15,7 +15,8 @@ import { DrakeSim } from './sim/drake';
 import { Rng } from './sim/random';
 import { Rampage, type RampageEvent } from './sim/rampage';
 import { PropKind, PropState } from './sim/props';
-import { buildVillageLayout, drakeSpawn } from './sim/village';
+import { spawnFor } from './sim/level';
+import { getLevel } from './sim/levels';
 import type { Input } from './sim/types';
 import { initPaper } from './view/paper';
 import { prewarmVillage, Stage } from './view/stage';
@@ -315,12 +316,13 @@ function buildForest() {
   clearWorld();
   sceneName = 'forest';
   lightVillage();
-  const layout = buildVillageLayout();
+  // Together, the room decides the level; alone, it is the default.
+  const layout = getLevel(party?.session.level || undefined);
   // Together, this is a replica of the server's village: same props from the
   // same layout, dwarves by snapshot, the local drake predicted.
   rampage = new Rampage(simWorld, simRng, drakeSim, layout, true, party !== null);
   stage.buildVillage(layout, rampage.props);
-  const start = party ? drakeSpawn(layout, Math.max(0, party.seat)) : layout.drakeStart;
+  const start = spawnFor(layout, party ? Math.max(0, party.seat) : 0);
   drakeSim.place(simWorld, start.x, start.z, start.yaw);
   cameraYaw = start.yaw;
   party?.onRebuilt();
@@ -480,7 +482,7 @@ else if (sceneName === 'forest') buildForest();
 else {
   buildCave();
   // Draw chapter two's paper while the reader is still on the cover.
-  setTimeout(() => void prewarmVillage(buildVillageLayout()), 400);
+  setTimeout(() => void prewarmVillage(getLevel()), 400);
 }
 
 // ── Events: the simulation told us something happened ──────────────────────

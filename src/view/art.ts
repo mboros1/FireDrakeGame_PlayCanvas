@@ -652,7 +652,7 @@ export const drawSun = () => withMargin(512, 512, 6, ctx => {
  * The stage floor: 2048² paper sheet mapped to the 116 m playfield. Grass
  * paper, cut-paper paths, a pond, stitched field patches.
  */
-export const drawVillageGround = (paths: [number, number][][], pond: [number, number, number]) => {
+export const drawVillageGround = (paths: [number, number][][], pond: [number, number, number] | null) => {
   const size = 2048;
   const { canvas, ctx } = makeCanvas(size, size);
   const r = artRng(404);
@@ -720,26 +720,7 @@ export const drawVillageGround = (paths: [number, number][][], pond: [number, nu
       }
     }
   }
-  // Pond.
-  const [px, pz, pr] = pond;
-  ctx.fillStyle = '#4f8a9a';
-  blobPath(ctx, toPx(px), toPx(pz), pr / 116 * size + 14, pr / 116 * size * .8 + 14, r, 7, 8, 5); ctx.fill();
-  ctx.fillStyle = '#6fb0bd';
-  blobPath(ctx, toPx(px), toPx(pz), pr / 116 * size, pr / 116 * size * .8, r, 7, 8, 5); ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,.6)';
-  ctx.lineWidth = 4;
-  for (let i = 0; i < 7; i++) {
-    const x = toPx(px) + (r() - .5) * pr * 20;
-    const y = toPx(pz) + (r() - .5) * pr * 12;
-    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 30, y); ctx.stroke();
-  }
-  // Lily pads.
-  for (let i = 0; i < 9; i++) {
-    ctx.fillStyle = PALETTE.moss;
-    const x = toPx(px) + (r() - .5) * pr * 22;
-    const y = toPx(pz) + (r() - .5) * pr * 14;
-    ctx.beginPath(); ctx.arc(x, y, 12, .4, Math.PI * 2); ctx.lineTo(x, y); ctx.fill();
-  }
+  if (pond) drawPond(ctx, pond, toPx, size, r);
   grainOver(ctx, size, size, .1, 12);
   return canvas;
 };
@@ -1118,4 +1099,27 @@ export const drawCaveArch = (fill: string, rim: string, seed: number) => {
   ctx.globalCompositeOperation = 'source-over';
   grainOver(ctx, 1024, 640, .12, seed);
   return canvas;
+};
+
+/** A pond with ripples and lily pads, on the village ground sheet. */
+const drawPond = (ctx: CanvasRenderingContext2D, pond: [number, number, number], toPx: (m: number) => number, size: number, r: () => number) => {
+  const [px, pz, pr] = pond;
+  ctx.fillStyle = '#4f8a9a';
+  blobPath(ctx, toPx(px), toPx(pz), pr / 116 * size + 14, pr / 116 * size * .8 + 14, r, 7, 8, 5); ctx.fill();
+  ctx.fillStyle = '#6fb0bd';
+  blobPath(ctx, toPx(px), toPx(pz), pr / 116 * size, pr / 116 * size * .8, r, 7, 8, 5); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.6)';
+  ctx.lineWidth = 4;
+  for (let i = 0; i < 7; i++) {
+    const x = toPx(px) + (r() - .5) * pr * 20;
+    const y = toPx(pz) + (r() - .5) * pr * 12;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 30, y); ctx.stroke();
+  }
+  // Lily pads.
+  for (let i = 0; i < 9; i++) {
+    ctx.fillStyle = PALETTE.moss;
+    const x = toPx(px) + (r() - .5) * pr * 22;
+    const y = toPx(pz) + (r() - .5) * pr * 14;
+    ctx.beginPath(); ctx.arc(x, y, 12, .4, Math.PI * 2); ctx.lineTo(x, y); ctx.fill();
+  }
 };

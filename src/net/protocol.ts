@@ -89,10 +89,10 @@ export type Snapshot = {
 export type PlayerInfo = { player: number; name: string; colour: number };
 
 export type ServerMessage =
-  | { t: 'welcome'; v: number; player: number; colour: number; room: string; seed: number; tickHz: number }
+  | { t: 'welcome'; v: number; player: number; colour: number; room: string; seed: number; tickHz: number; level: string }
   | { t: 'roster'; players: PlayerInfo[] }
   | { t: 'full' }
-  | { t: 'restart'; seed: number }
+  | { t: 'restart'; seed: number; level: string }
   | { t: 'pong'; at: number }
   | Snapshot;
 

@@ -14,7 +14,8 @@ import { World } from '../src/sim/world';
 import { Rng } from '../src/sim/random';
 import { DrakeSim } from '../src/sim/drake';
 import { Rampage, type RampageEvent } from '../src/sim/rampage';
-import { buildVillageLayout, drakeSpawn, type VillageLayout } from '../src/sim/village';
+import { spawnFor, type LevelDefinition } from '../src/sim/level';
+import { getLevel } from '../src/sim/levels';
 import { NO_INPUT, type Input, type Transform } from '../src/sim/types';
 import {
   cm,
@@ -64,7 +65,7 @@ const MAX_QUEUED_INPUTS = 4;
 export class Room {
   private world = new World();
   private rng: Rng;
-  private layout: VillageLayout = buildVillageLayout();
+  private layout: LevelDefinition = getLevel();
   private rampage: Rampage;
   private readonly players = new Map<WebSocket, Player>();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -94,7 +95,7 @@ export class Room {
     const name = (requestedName || '').replace(/[^\p{L}\p{N} _-]/gu, '').slice(0, 16) || `Drake ${seat + 1}`;
     const drake = this.spawnDrake(seat);
     this.players.set(socket, { socket, seat, name, drake, input: { ...NO_INPUT }, lastSeen: Date.now(), inputBudget: MAX_INPUTS_PER_SECOND, ack: -1, queue: [] });
-    send(socket, { t: 'welcome', v: PROTOCOL_VERSION, player: seat, colour: seat, room: this.name, seed: this.seed, tickHz: SERVER_TICK_HZ });
+    send(socket, { t: 'welcome', v: PROTOCOL_VERSION, player: seat, colour: seat, room: this.name, seed: this.seed, tickHz: SERVER_TICK_HZ, level: this.layout.id });
     this.broadcastRoster();
     if (!this.timer) this.timer = setInterval(() => this.step(), 1000 / SERVER_TICK_HZ);
     return true;
@@ -139,7 +140,7 @@ export class Room {
   }
 
   private spawnDrake(seat: number) {
-    const start = drakeSpawn(this.layout, seat);
+    const start = spawnFor(this.layout, seat);
     const drake = new DrakeSim(this.world, start.x, start.z, start.yaw, seat);
     this.rampage.addDrake(drake);
     return drake;
@@ -149,7 +150,7 @@ export class Room {
   private restart() {
     this.world = new World();
     this.rng = new Rng(this.seed);
-    this.layout = buildVillageLayout();
+    this.layout = getLevel(this.layout.id);
     this.rampage = new Rampage(this.world, this.rng, null, this.layout, true);
     for (const player of this.players.values()) {
       player.drake = this.spawnDrake(player.seat);
@@ -157,7 +158,7 @@ export class Room {
     }
     this.pending = [];
     this.tick = 0;
-    this.broadcast({ t: 'restart', seed: this.seed });
+    this.broadcast({ t: 'restart', seed: this.seed, level: this.layout.id });
   }
 
   private step() {

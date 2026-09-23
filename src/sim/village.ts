@@ -1,26 +1,18 @@
 /**
- * Level layout for chapter two: the village of Little Kindling. This module
- * must never import `playcanvas`.
+ * Generator for Little Kindling. This module must never import `playcanvas`.
  *
- * Layout is simulation data, not presentation — the server needs every
- * collider and every flammable thing in the same place the client draws them.
- * It is generated from a seed rather than hand-placed so the whole village is
- * a few dozen lines, and the same seed always yields the same village.
+ * The game does not call this at runtime: it plays `src/levels/*.json`. This
+ * is the tool that wrote the first level file (`npm run levels:export`), kept
+ * because procedural placement is still the quickest way to rough out a new
+ * village before hand-editing it.
  */
 
 import { Rng } from './random';
 import { PropKind } from './props';
+import { LEVEL_FORMAT, type LevelDefinition, type PropPlacement } from './level';
 
-export type PropPlacement = { kind: PropKind; x: number; z: number; yaw: number; size: number; variant: number };
-
-export type VillageLayout = {
-  props: PropPlacement[];
-  /** Parchment paths, as polylines in metres. Presentation only, but shared so props avoid them. */
-  paths: [number, number][][];
-  /** Pond centre and radius. */
-  pond: [number, number, number];
-  drakeStart: { x: number; z: number; yaw: number };
-};
+/** @deprecated Levels are {@link LevelDefinition}s; kept for call sites mid-migration. */
+export type VillageLayout = LevelDefinition;
 
 const facing = (x: number, z: number, towardX: number, towardZ: number) =>
   Math.atan2(towardX - x, towardZ - z) * (180 / Math.PI);
@@ -32,7 +24,7 @@ const distanceToSegment = (px: number, pz: number, ax: number, az: number, bx: n
   return Math.hypot(px - (ax + dx * t), pz - (az + dz * t));
 };
 
-export const buildVillageLayout = (seed = 0x5eed): VillageLayout => {
+export const generateVillage = (seed = 0x5eed): LevelDefinition => {
   const rng = new Rng(seed);
   const props: PropPlacement[] = [];
   const pond: [number, number, number] = [26, -24, 6.5];
@@ -125,15 +117,7 @@ export const buildVillageLayout = (seed = 0x5eed): VillageLayout => {
     trees++;
   }
 
-  return { props, paths, pond, drakeStart };
-};
-
-/**
- * Where seat `seat` enters the village: side by side on the road in. Shared
- * by the server, which spawns there, and the client, which must predict from
- * exactly the same spot.
- */
-export const drakeSpawn = (layout: VillageLayout, seat: number) => {
-  const offset = [0, -4, 4, -8][seat] ?? 0;
-  return { x: layout.drakeStart.x + offset, z: layout.drakeStart.z + Math.abs(offset) * .4, yaw: layout.drakeStart.yaw };
+  // Seats side by side on the road in.
+  const spawns = [0, -4, 4, -8].map(offset => ({ x: drakeStart.x + offset, z: drakeStart.z + Math.abs(offset) * .4, yaw: drakeStart.yaw }));
+  return { format: LEVEL_FORMAT, id: 'little-kindling', title: 'Little Kindling', props, paths, pond, spawns };
 };

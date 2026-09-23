@@ -14,7 +14,7 @@ import { DwarfSim, type Threat } from './dwarf';
 import { PropKind, PropSim, PropState } from './props';
 import type { Rng } from './random';
 import { EntityFlags, type Input, type Transform } from './types';
-import type { VillageLayout } from './village';
+import { spawnFor, type LevelDefinition } from './level';
 import type { World } from './world';
 import { TUNING } from '../tuning';
 
@@ -89,7 +89,7 @@ export class Rampage {
     private readonly world: World,
     private readonly rng: Rng,
     drake: DrakeSim | null,
-    layout?: VillageLayout,
+    layout?: LevelDefinition,
     /** The cave is a prologue: nothing there counts towards mayhem. */
     private readonly scoring = true,
     /**
@@ -108,8 +108,9 @@ export class Rampage {
       for (let i = 0; i < 6; i++) this.spawnDwarf();
       // A welcoming committee on the road in, so chapter two opens on faces.
       for (let i = 0; i < 3; i++) {
-        const x = layout.drakeStart.x + this.rng.spread(6);
-        const z = layout.drakeStart.z - 9 - this.rng.range(0, 6);
+        const start = spawnFor(layout, 0);
+        const x = start.x + this.rng.spread(6);
+        const z = start.z - 9 - this.rng.range(0, 6);
         this.dwarves.push(new DwarfSim(world, this.rng, x, z));
       }
     }

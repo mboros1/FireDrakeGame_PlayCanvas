@@ -51,7 +51,7 @@ import {
 } from './paper';
 import { PropKind, PropSim, PropState } from '../sim/props';
 import { World } from '../sim/world';
-import type { VillageLayout } from '../sim/village';
+import type { LevelDefinition } from '../sim/level';
 
 // ── Shared texture cache: drawn once per session, reused across scene loads ──
 
@@ -290,12 +290,12 @@ export class Stage {
 
   // ── Chapter the Second: Little Kindling ──────────────────────────────────
 
-  buildVillage(layout: VillageLayout, props: PropSim[]) {
+  buildVillage(layout: LevelDefinition, props: PropSim[]) {
     const root = this.root;
     this.buildSky([[0, '#f6b489'], [.18, '#f7cfa4'], [.45, '#b9d3d0'], [1, '#6f9fbf']], 0);
 
     // Stage floor, then the table beyond it.
-    const groundTexture = once('ground:village', () => canvasTexture(drawVillageGround(layout.paths, layout.pond), { softAlpha: true }));
+    const groundTexture = once(`ground:${layout.id}`, () => canvasTexture(drawVillageGround(layout.paths, layout.pond), { softAlpha: true }));
     const ground = new pc.Entity('Village ground');
     ground.addComponent('render', { type: 'plane', castShadows: false, receiveShadows: true });
     ground.render!.material = once('mat:ground', () => cardMaterial(groundTexture, .05, false));
@@ -745,9 +745,9 @@ const drawHoard = () => {
  * same `once` cache `buildVillage` reads from; the last step builds and
  * discards a whole hidden village to catch whatever the earlier steps missed.
  */
-export async function prewarmVillage(layout: VillageLayout) {
+export async function prewarmVillage(layout: LevelDefinition) {
   const yieldToFrame = () => new Promise(resolve => setTimeout(resolve, 0));
-  once('ground:village', () => canvasTexture(drawVillageGround(layout.paths, layout.pond), { softAlpha: true }));
+  once(`ground:${layout.id}`, () => canvasTexture(drawVillageGround(layout.paths, layout.pond), { softAlpha: true }));
   await yieldToFrame();
   const seen = new Set<number>();
   for (const p of layout.props) {
