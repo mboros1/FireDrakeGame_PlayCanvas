@@ -550,10 +550,33 @@ function drakeYaw() {
   return t.yaw;
 }
 
+// ── Boot screen ────────────────────────────────────────────────────────────
+
+/**
+ * Lift the inline boot screen once the drake is in and the book's fonts have
+ * loaded, so the first thing a reader sees is the styled cover rather than a
+ * flash of plain text. Fonts get a short grace period, not a veto: offline,
+ * the Georgia fallback is better than waiting forever.
+ */
+let booted = false;
+const fontsReady = Promise.race([document.fonts.ready, new Promise(resolve => setTimeout(resolve, 2500))]);
+function finishBoot() {
+  if (booted) return;
+  booted = true;
+  void fontsReady.then(() => {
+    document.body.classList.add('ready');
+    const boot = document.querySelector<HTMLDivElement>('#boot');
+    if (!boot) return;
+    boot.classList.add('done');
+    setTimeout(() => boot.remove(), 800);
+  });
+}
+
 // ── Frame ──────────────────────────────────────────────────────────────────
 
 app.on('update', (frameDt: number) => {
   elapsed += frameDt;
+  if (!booted && (drake.modelReady || drake.loadError)) finishBoot();
   // Hit-stop: a few frames of near-freeze on a big impact sells the weight.
   const dt = hitStop > 0 ? frameDt * .12 : frameDt;
   hitStop = Math.max(0, hitStop - frameDt);

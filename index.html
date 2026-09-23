@@ -8,8 +8,44 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=IM+Fell+English+SC&display=swap" rel="stylesheet" />
     <title>Fire Drake — A Storybook Rampage</title>
+    <style>
+      /*
+       * Boot styles, inline so they apply on the first paint. The main
+       * stylesheet arrives with the JS module; until then every piece of
+       * printed matter stays hidden behind this screen. main.ts adds
+       * body.ready once the drake and the fonts are in.
+       */
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #1a1016; }
+      #game { display: block; width: 100%; height: 100%; }
+      body:not(.ready) #hud, body:not(.ready) #cover, body:not(.ready) #the-end, body:not(.ready) #loading { visibility: hidden; }
+      #boot {
+        position: fixed; inset: 0; z-index: 10; display: grid; place-content: center; gap: 22px;
+        justify-items: center; pointer-events: none;
+        background: radial-gradient(ellipse at center, #3a1624 0%, #1a1016 70%);
+        color: #f3d9a4; font: italic 20px 'Iowan Old Style', Georgia, serif; letter-spacing: .02em;
+        transition: opacity .7s ease;
+      }
+      #boot.done { opacity: 0; }
+      #boot .ember { position: relative; width: 44px; height: 64px; }
+      #boot .ember span {
+        position: absolute; left: 50%; bottom: 0; transform-origin: 50% 100%;
+        border-radius: 50% 50% 50% 50% / 62% 62% 38% 38%;
+        animation: boot-flicker 1.1s ease-in-out infinite alternate;
+      }
+      #boot .ember span:nth-child(1) { width: 44px; height: 64px; margin-left: -22px; background: #e8431c; }
+      #boot .ember span:nth-child(2) { width: 30px; height: 46px; margin-left: -15px; background: #ff8a26; animation-delay: -.35s; }
+      #boot .ember span:nth-child(3) { width: 16px; height: 26px; margin-left: -8px; background: #ffd35a; animation-delay: -.7s; }
+      @keyframes boot-flicker {
+        from { transform: scale(1, 1) rotate(-3deg); }
+        to { transform: scale(.9, 1.08) rotate(3deg); }
+      }
+    </style>
   </head>
   <body>
+    <div id="boot">
+      <div class="ember"><span></span><span></span><span></span></div>
+      <div>Fetching the drake…</div>
+    </div>
     <canvas id="game"></canvas>
 
     <div id="hud">
