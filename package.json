@@ -12,7 +12,8 @@
     "sanitize:forest": "node scripts/sanitize-gltf.mjs public/assets/forest-sector",
     "extract:model": "node scripts/extract-model-data.mjs",
     "iterate": "npm run build && npm run test:browser",
-    "record": "node scripts/record-gameplay.mjs"
+    "record": "node scripts/record-gameplay.mjs",
+    "package:itch": "node scripts/package-itch.mjs"
   },
   "dependencies": {
     "playcanvas": "2.21.0"

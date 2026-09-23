@@ -25,6 +25,7 @@ import { DrakeView, loadAsset } from './view/drake';
 import { GRADES, PostStack } from './view/post';
 import { Hud } from './view/hud';
 import { Sound } from './view/audio';
+import { assetUrl } from './assets';
 
 type SceneName = 'cave' | 'forest' | 'forestExtract';
 type SavedState = { scene: SceneName; x: number; z: number; yaw: number };
@@ -306,7 +307,7 @@ async function buildExtractedForestSector() {
     return m;
   };
   try {
-    const response = await fetch('/assets/forest-sector/forest-sector.json');
+    const response = await fetch(assetUrl('assets/forest-sector/forest-sector.json'));
     if (!response.ok) throw new Error(`Manifest request failed: ${response.status}`);
     const manifest = await response.json() as ForestManifest;
     extractedSourceLevel = manifest.source_level;
@@ -322,7 +323,7 @@ async function buildExtractedForestSector() {
     const browserAssets = new Map<string, { definition: ForestAsset; container: pc.ContainerResource }>();
     await Promise.all(Object.entries(manifest.assets).map(async ([meshPath, definition]) => {
       if (!definition.exported) return;
-      const asset = await loadAsset(app, definition.browser_glb, 'container');
+      const asset = await loadAsset(app, assetUrl(definition.browser_glb), 'container');
       browserAssets.set(meshPath, { definition, container: asset.resource as pc.ContainerResource });
     }));
     for (const instance of manifest.instances) {

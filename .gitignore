@@ -24,3 +24,6 @@ assets-source/
 
 # Gameplay recordings (npm run record)
 recordings/
+
+# Packaged builds (npm run package:itch). They contain the licensed drake.
+release/

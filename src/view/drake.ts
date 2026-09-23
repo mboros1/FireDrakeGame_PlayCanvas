@@ -10,6 +10,7 @@ import * as pc from 'playcanvas';
 import { DRAKE_SOLE, TUNING } from '../tuning';
 import type { DrakeSim } from '../sim/drake';
 import { DrakeRig } from './rig';
+import { assetUrl } from '../assets';
 import type { Transform, WorldState } from '../sim/types';
 
 export const loadAsset = (app: pc.AppBase, url: string, type: string) =>
@@ -217,10 +218,10 @@ export class DrakeView {
     try {
       const app = this.app;
       const [containerAsset, baseColorAsset, emissiveAsset, normalAsset] = await Promise.all([
-        loadAsset(app, '/assets/wyvern/wyvern.glb', 'container'),
-        loadAsset(app, '/assets/wyvern/wyvern_base.webp', 'texture'),
-        loadAsset(app, '/assets/wyvern/wyvern_emissive.webp', 'texture'),
-        loadAsset(app, '/assets/wyvern/wyvern_normal.webp', 'texture')
+        loadAsset(app, assetUrl('assets/wyvern/wyvern.glb'), 'container'),
+        loadAsset(app, assetUrl('assets/wyvern/wyvern_base.webp'), 'texture'),
+        loadAsset(app, assetUrl('assets/wyvern/wyvern_emissive.webp'), 'texture'),
+        loadAsset(app, assetUrl('assets/wyvern/wyvern_normal.webp'), 'texture')
       ]);
       const container = containerAsset.resource as pc.ContainerResource;
       const model = container.instantiateRenderEntity({ castShadows: true });
@@ -267,8 +268,8 @@ export class DrakeView {
   private async loadAnimations(model: pc.Entity) {
     try {
       const [idle, walk] = await Promise.all([
-        loadAsset(this.app, '/assets/wyvern/idle.glb', 'container'),
-        loadAsset(this.app, '/assets/wyvern/walk.glb', 'container')
+        loadAsset(this.app, assetUrl('assets/wyvern/idle.glb'), 'container'),
+        loadAsset(this.app, assetUrl('assets/wyvern/walk.glb'), 'container')
       ]);
       const track = (asset: pc.Asset) => (asset.resource as unknown as { animations: pc.Asset[] }).animations[0].resource as pc.AnimTrack;
       model.addComponent('anim', { activate: true });
