@@ -14,7 +14,18 @@
 import type { RampageEvent } from '../sim/rampage';
 import type { Input } from '../sim/types';
 
-export const PROTOCOL_VERSION = 1;
+/**
+ * Bump when a message shape changes incompatibly. Clients send it when they
+ * connect; a mismatch is refused with {@link CLOSE_OUTDATED} so a stale cached
+ * page says "refresh" instead of misreading snapshots.
+ */
+export const PROTOCOL_VERSION = 2;
+
+/** WebSocket close codes the server uses, so the client can explain. */
+export const CLOSE_IDLE = 4000;
+export const CLOSE_FULL = 4001;
+export const CLOSE_OUTDATED = 4002;
+export const CLOSE_BUSY = 4003;
 
 /** Server simulation rate. Clients render faster and interpolate. */
 export const SERVER_TICK_HZ = 30;

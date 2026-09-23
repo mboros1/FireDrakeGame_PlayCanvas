@@ -18,6 +18,7 @@ import { spawnFor, type LevelDefinition } from '../src/sim/level';
 import { getLevel } from '../src/sim/levels';
 import { NO_INPUT, type Input, type Transform } from '../src/sim/types';
 import {
+  CLOSE_IDLE,
   cm,
   decodeInput,
   deg,
@@ -36,8 +37,13 @@ import {
 
 const TICK = 1 / SERVER_TICK_HZ;
 const TICKS_PER_SNAPSHOT = Math.round(SERVER_TICK_HZ / SNAPSHOT_HZ);
-/** A player whose socket goes quiet this long is dropped. */
-const IDLE_TIMEOUT_MS = 20_000;
+/**
+ * A player whose socket sends nothing this long is dropped. Generous: a
+ * backgrounded tab stops sending inputs, and the player may come back.
+ */
+const IDLE_TIMEOUT_MS = 45_000;
+/** Most ticks to run in one timer callback when catching up after a stall. */
+const MAX_CATCH_UP_TICKS = 4;
 /** Inputs arriving faster than this per second are ignored, not queued. */
 const MAX_INPUTS_PER_SECOND = 90;
 
@@ -73,6 +79,9 @@ export class Room {
   private pending: RampageEvent[] = [];
   private seed: number;
   private readonly at: Transform = { x: 0, y: 0, z: 0, yaw: 0 };
+  /** Wall-clock time owed to the simulation, so late timers do not slow the game. */
+  private owed = 0;
+  private lastTimer = 0;
 
   constructor(readonly name: string, private readonly onEmpty: (room: Room) => void) {
     this.seed = hashRoom(name);
@@ -97,7 +106,11 @@ export class Room {
     this.players.set(socket, { socket, seat, name, drake, input: { ...NO_INPUT }, lastSeen: Date.now(), inputBudget: MAX_INPUTS_PER_SECOND, ack: -1, queue: [] });
     send(socket, { t: 'welcome', v: PROTOCOL_VERSION, player: seat, colour: seat, room: this.name, seed: this.seed, tickHz: SERVER_TICK_HZ, level: this.layout.id });
     this.broadcastRoster();
-    if (!this.timer) this.timer = setInterval(() => this.step(), 1000 / SERVER_TICK_HZ);
+    if (!this.timer) {
+      this.lastTimer = performance.now();
+      this.owed = 0;
+      this.timer = setInterval(() => this.pump(), 1000 / SERVER_TICK_HZ);
+    }
     return true;
   }
 
@@ -161,11 +174,30 @@ export class Room {
     this.broadcast({ t: 'restart', seed: this.seed, level: this.layout.id });
   }
 
+  /**
+   * Run as many fixed ticks as wall-clock time says are due. setInterval
+   * drifts and stalls under load; counting real time keeps the simulation at
+   * 30 Hz on average, and the cap stops a long stall turning into a burst.
+   */
+  private pump() {
+    const now = performance.now();
+    this.owed += now - this.lastTimer;
+    this.lastTimer = now;
+    const tickMs = 1000 / SERVER_TICK_HZ;
+    let ran = 0;
+    while (this.owed >= tickMs && ran < MAX_CATCH_UP_TICKS) {
+      this.owed -= tickMs;
+      this.step();
+      ran++;
+    }
+    if (ran === MAX_CATCH_UP_TICKS) this.owed = 0;
+  }
+
   private step() {
     const now = Date.now();
     for (const player of [...this.players.values()]) {
       if (now - player.lastSeen > IDLE_TIMEOUT_MS) {
-        player.socket.close(4000, 'idle');
+        player.socket.close(CLOSE_IDLE, 'idle');
         this.leave(player.socket);
       }
       // Refill a second's worth of input allowance a tick at a time.

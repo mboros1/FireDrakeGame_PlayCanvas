@@ -83,9 +83,15 @@ export class Party {
     this.session.onSnapshot = snapshot => this.receive(snapshot);
     this.session.onRoster = roster => this.renderRoster(roster);
     this.session.onStatus = status => {
-      const detail = status === 'full' ? `Room ${room} is full: four drakes is the limit.`
-        : status === 'closed' ? 'The connection to the story was lost.'
-          : status === 'open' ? `Joined room ${room}.` : `Joining room ${room}…`;
+      const detail = {
+        connecting: `Joining room ${room}…`,
+        open: `Joined room ${room}.`,
+        reconnecting: 'The page fluttered. Finding our place again…',
+        closed: 'The connection to the story was lost. Refresh to rejoin.',
+        full: `Room ${room} is full: four drakes is the limit.`,
+        outdated: 'A newer edition of this book is out. Refresh the page to read it.',
+        busy: 'The storyteller is overwhelmed. Try again in a moment.'
+      }[status];
       deps.status(status, detail);
       this.renderRoster(this.session.roster);
     };
@@ -102,6 +108,11 @@ export class Party {
 
   get connected() {
     return this.ready && this.session.status === 'open';
+  }
+
+  /** Waiting to rejoin after a drop: the world is frozen, not over. */
+  get reconnecting() {
+    return this.session.status === 'reconnecting';
   }
 
   /** Called after the village replica is (re)built. */

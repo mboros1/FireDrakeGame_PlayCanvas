@@ -12,12 +12,20 @@
 
 import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { cleanRoom, type ClientMessage } from '../src/net/protocol';
+import { CLOSE_BUSY, CLOSE_FULL, CLOSE_OUTDATED, cleanRoom, PROTOCOL_VERSION, type ClientMessage } from '../src/net/protocol';
 import { Room } from './room';
 
 const PORT = Number(process.env.PORT ?? 8080);
 const rooms = new Map<string, Room>();
 const startedAt = Date.now();
+
+/** Protection for one small machine: plenty for friends, not for a flood. */
+const MAX_ROOMS = 200;
+const MAX_CONNECTIONS_PER_IP = 8;
+/** Ping every socket this often; one that has not answered since is dead. */
+const HEARTBEAT_MS = 15_000;
+const connectionsByIp = new Map<string, number>();
+const alive = new WeakMap<WebSocket, boolean>();
 
 const http = createServer((request, response) => {
   if (request.url === '/' || request.url?.startsWith('/health')) {
@@ -36,6 +44,27 @@ sockets.on('connection', (socket: WebSocket, request) => {
   const roomName = cleanRoom(url.searchParams.get('room'));
   const playerName = url.searchParams.get('name') ?? '';
 
+  // A page from before a protocol change must refresh, not misread snapshots.
+  if (Number(url.searchParams.get('v')) !== PROTOCOL_VERSION) {
+    socket.close(CLOSE_OUTDATED, 'outdated client');
+    return;
+  }
+  // Fly's proxy puts the real client address in Fly-Client-IP.
+  const ip = String(request.headers['fly-client-ip'] ?? request.socket.remoteAddress ?? 'unknown');
+  const fromIp = connectionsByIp.get(ip) ?? 0;
+  if (fromIp >= MAX_CONNECTIONS_PER_IP || (!rooms.has(roomName) && rooms.size >= MAX_ROOMS)) {
+    socket.close(CLOSE_BUSY, 'server busy');
+    return;
+  }
+  connectionsByIp.set(ip, fromIp + 1);
+  socket.once('close', () => {
+    const left = (connectionsByIp.get(ip) ?? 1) - 1;
+    if (left <= 0) connectionsByIp.delete(ip);
+    else connectionsByIp.set(ip, left);
+  });
+  alive.set(socket, true);
+  socket.on('pong', () => alive.set(socket, true));
+
   let room = rooms.get(roomName);
   if (!room) {
     room = new Room(roomName, emptied => {
@@ -46,7 +75,7 @@ sockets.on('connection', (socket: WebSocket, request) => {
     console.log(`room ${roomName} opened`);
   }
   if (!room.join(socket, playerName)) {
-    socket.close(4001, 'room full');
+    socket.close(CLOSE_FULL, 'room full');
     return;
   }
   console.log(`room ${roomName}: ${room.size} player(s)`);
@@ -65,7 +94,19 @@ sockets.on('connection', (socket: WebSocket, request) => {
   socket.on('error', () => joined.leave(socket));
 });
 
-http.listen(PORT, '0.0.0.0', () => console.log(`fire drake server listening on :${PORT}`));
+// Phones drop off networks without closing sockets; heartbeats find them.
+setInterval(() => {
+  for (const client of sockets.clients) {
+    if (alive.get(client) === false) {
+      client.terminate();
+      continue;
+    }
+    alive.set(client, false);
+    client.ping();
+  }
+}, HEARTBEAT_MS).unref();
+
+http.listen(PORT, '0.0.0.0', () => console.log(`fire drake server listening on :${PORT} (protocol ${PROTOCOL_VERSION})`));
 
 // Fly sends SIGINT/SIGTERM on stop; close sockets so clients see a clean drop.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

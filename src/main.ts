@@ -61,6 +61,7 @@ declare global {
       poseBone: (name: string, x: number, y: number, z: number) => void;
       boneLocal: (name: string) => number[] | null;
       setCamera: (yaw: number, pitch: number, distance: number) => void;
+      dropConnection: () => void;
       nearest: (kind: 'dwarf' | 'cottage' | 'haystack' | 'stall' | 'maypole' | 'tree' | 'fence') => { x: number; z: number; distance: number } | null;
     };
   }
@@ -446,10 +447,9 @@ function startParty(roomCode: string, name: string) {
     },
     events: incoming => events.push(...incoming),
     status: (status, detail) => {
-      if (status === 'closed' || status === 'full') {
-        hud.setLoading(false);
-        hud.narrateText(detail);
-      }
+      if (status === 'open' || status === 'connecting') return;
+      hud.setLoading(false);
+      hud.narrateText(detail);
     }
   }, SERVER_URL, room, name);
 }
@@ -620,6 +620,7 @@ window.__FIRE_DRAKE_DEBUG__ = {
     const at = drake.root.getPosition();
     cameraYawTarget = Math.atan2(-(x - at.x), -(z - at.z)) * pc.math.RAD_TO_DEG;
   },
+  dropConnection: () => party?.session.simulateDrop(),
   nearest: kind => {
     // Automation helper for scripted play: the closest untouched target.
     const at = drake.root.getPosition();

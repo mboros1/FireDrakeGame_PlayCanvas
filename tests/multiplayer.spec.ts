@@ -1,4 +1,6 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
+import WebSocket from 'ws';
+import { CLOSE_OUTDATED, PROTOCOL_VERSION } from '../src/net/protocol';
 
 /**
  * Two browsers, one room, against a real room server (see playwright.config).
@@ -70,4 +72,28 @@ test('two drakes share one village', async ({ browser }) => {
   expect(b.errors).toEqual([]);
   await a.page.close();
   await b.page.close();
+});
+
+test('a dropped connection rejoins the room on its own', async ({ browser }) => {
+  const room = `drop-${Date.now() % 100000}`;
+  const a = await join(browser, room, 'Alpha');
+  const b = await join(browser, room, 'Beta');
+  await expect.poll(async () => (await state(b.page)).net?.players).toBe(2);
+
+  await a.page.evaluate(() => (window.__FIRE_DRAKE_DEBUG__ as unknown as { dropConnection: () => void }).dropConnection());
+  await expect.poll(async () => (await state(a.page)).net?.status, { timeout: 10_000 }).toBe('open');
+  // Back in the same room with the same company.
+  await expect.poll(async () => (await state(a.page)).net?.players, { timeout: 10_000 }).toBe(2);
+  await expect.poll(async () => (await state(b.page)).net?.players).toBe(2);
+  expect(a.errors.filter(e => !e.includes('WebSocket'))).toEqual([]);
+  await a.page.close();
+  await b.page.close();
+});
+
+test('a client from an older edition is told to refresh, not let in', async () => {
+  const code = await new Promise<number>(resolve => {
+    const socket = new WebSocket(`${SERVER}?room=old&name=Old&v=${PROTOCOL_VERSION - 1}`);
+    socket.on('close', closeCode => resolve(closeCode));
+  });
+  expect(code).toBe(CLOSE_OUTDATED);
 });

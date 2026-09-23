@@ -18,6 +18,9 @@
  */
 
 import {
+  CLOSE_BUSY,
+  CLOSE_FULL,
+  CLOSE_OUTDATED,
   encodeInput,
   PROTOCOL_VERSION,
   type DrakeRow,
@@ -32,7 +35,14 @@ import type { Input } from '../sim/types';
 export const INTERPOLATION_DELAY_MS = 110;
 const HISTORY = 128;
 
-export type NetStatus = 'connecting' | 'open' | 'closed' | 'full';
+/**
+ * `reconnecting` is transient: the session retries on its own. `closed`,
+ * `full`, `outdated` and `busy` are final until the player acts.
+ */
+export type NetStatus = 'connecting' | 'open' | 'reconnecting' | 'closed' | 'full' | 'outdated' | 'busy';
+
+/** Retry delays after an unexpected drop; then give up and say so. */
+const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000, 15000];
 
 type Timed = { at: number; snapshot: Snapshot };
 
@@ -54,7 +64,11 @@ export class NetSession {
   onRoster: (roster: PlayerInfo[]) => void = () => {};
   onStatus: (status: NetStatus) => void = () => {};
 
-  private readonly socket: WebSocket;
+  private socket!: WebSocket;
+  private readonly url: URL;
+  private attempt = 0;
+  private closing = false;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly buffer: Timed[] = [];
   private seq = 0;
   private reconciledTick = -1;
@@ -62,24 +76,53 @@ export class NetSession {
   private readonly history = new Map<number, { x: number; z: number; yaw: number }>();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(url: string, room: string, name: string) {
-    const target = new URL(url);
-    target.searchParams.set('room', room);
-    target.searchParams.set('name', name);
-    this.socket = new WebSocket(target);
-    this.socket.addEventListener('open', () => {
+  constructor(url: string, room: string, private readonly name: string) {
+    this.url = new URL(url);
+    this.url.searchParams.set('room', room);
+    this.url.searchParams.set('name', name);
+    this.url.searchParams.set('v', String(PROTOCOL_VERSION));
+    this.connect();
+  }
+
+  private connect() {
+    const socket = new WebSocket(this.url);
+    this.socket = socket;
+    socket.addEventListener('open', () => {
+      this.attempt = 0;
       this.setStatus('open');
-      this.send({ t: 'hello', v: PROTOCOL_VERSION, name });
+      this.send({ t: 'hello', v: PROTOCOL_VERSION, name: this.name });
+      if (this.pingTimer) clearInterval(this.pingTimer);
       this.pingTimer = setInterval(() => this.send({ t: 'ping', at: performance.now() }), 2000);
     });
-    this.socket.addEventListener('message', event => this.receive(JSON.parse(String(event.data)) as ServerMessage));
-    this.socket.addEventListener('close', () => {
+    socket.addEventListener('message', event => {
+      if (socket === this.socket) this.receive(JSON.parse(String(event.data)) as ServerMessage);
+    });
+    socket.addEventListener('close', event => {
+      if (socket !== this.socket) return;
       if (this.pingTimer) clearInterval(this.pingTimer);
-      if (this.status !== 'full') this.setStatus('closed');
+      this.pingTimer = null;
+      if (this.closing) return this.setStatus('closed');
+      if (event.code === CLOSE_FULL || this.status === 'full') return this.setStatus('full');
+      if (event.code === CLOSE_OUTDATED) return this.setStatus('outdated');
+      if (event.code === CLOSE_BUSY) return this.setStatus('busy');
+      // Anything else (a network change, a redeploy, a sleeping phone) is
+      // worth retrying. The room keeps running for whoever stayed.
+      const delay = RECONNECT_DELAYS_MS[this.attempt];
+      if (delay === undefined) return this.setStatus('closed');
+      this.attempt++;
+      this.setStatus('reconnecting');
+      this.retryTimer = setTimeout(() => this.connect(), delay);
     });
   }
 
   close() {
+    this.closing = true;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.socket.close();
+  }
+
+  /** Debug: drop the socket as a flaky network would, without meaning to leave. */
+  simulateDrop() {
     this.socket.close();
   }
 
@@ -184,6 +227,11 @@ export class NetSession {
   private receive(message: ServerMessage) {
     switch (message.t) {
       case 'welcome':
+        // A fresh start: on a reconnect, old snapshots and inputs belong to
+        // a previous seat and must not be reconciled against.
+        this.buffer.length = 0;
+        this.history.clear();
+        this.reconciledTick = -1;
         this.player = message.player;
         this.room = message.room;
         this.level = message.level;
