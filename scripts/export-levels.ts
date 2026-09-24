@@ -19,7 +19,9 @@ const rounded = validateLevel({
   props: level.props.map(p => ({ kind: propKindName(p.kind), x: cm(p.x), z: cm(p.z), yaw: Math.round(p.yaw * 10) / 10, size: cm(p.size), variant: p.variant })),
   paths: level.paths.map(path => path.map(([x, z]) => [cm(x), cm(z)] as [number, number])),
   pond: level.pond,
-  spawns: level.spawns.map(s => ({ x: cm(s.x), z: cm(s.z), yaw: s.yaw }))
+  spawns: level.spawns.map(s => ({ x: cm(s.x), z: cm(s.z), yaw: s.yaw })),
+  heading: 'In Which Little Kindling Has a Very Bad Day',
+  mood: 'afternoon'
 });
 // One prop per line: diffs of a hand-edited level stay reviewable.
 const json = JSON.stringify(toLevelFile(rounded), null, 2)

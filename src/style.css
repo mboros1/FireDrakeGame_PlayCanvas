@@ -926,7 +926,7 @@ body.at-desk #hud { display: none; }
 
 .desk-inspector {
   position: absolute;
-  top: 118px;
+  bottom: 96px;
   left: 16px;
   padding: 10px 14px;
   background: var(--cream);
@@ -984,3 +984,86 @@ body.touch .write-chapter { display: none; }
 
 .draft-banner.hidden { display: none; }
 .draft-banner kbd { background: var(--paper); }
+
+.desk-details {
+  position: absolute;
+  top: 118px;
+  left: 16px;
+  width: 420px;
+  max-height: calc(100vh - 230px);
+  overflow-y: auto;
+  padding: 14px 18px 16px;
+  background: var(--paper);
+  box-shadow: 0 12px 26px rgba(30, 10, 10, .35);
+  transform: rotate(-.6deg);
+  pointer-events: auto;
+}
+
+.desk-details.hidden { display: none; }
+.details-title { font: 17px var(--caps); letter-spacing: .1em; color: var(--berry); margin-bottom: 8px; }
+.details-field { display: block; margin: 10px 0 0; font: 13px var(--caps); letter-spacing: .06em; color: var(--oxblood); }
+
+.details-field input, .details-field textarea {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 2px;
+  background: var(--cream);
+  font: italic 15px var(--serif);
+  color: var(--ink);
+  resize: vertical;
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, .12);
+}
+
+.details-moods { display: flex; gap: 6px; margin-top: 5px; }
+
+.details-moods button {
+  flex: 1;
+  padding: 26px 6px 6px;
+  border: 0;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--sky) 0 55%, var(--ground) 55%);
+  color: #fff;
+  font: 12px var(--caps);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .7);
+  cursor: pointer;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, .2);
+}
+
+.details-moods button.active { outline: 3px solid var(--berry); outline-offset: 2px; }
+
+.details-deeds { list-style: none; margin: 6px 0 0; padding: 0; }
+
+.details-deeds li[data-deed] {
+  display: grid;
+  grid-template-columns: 1.3fr 54px 1.4fr 24px;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.details-deeds select, .details-deeds input {
+  margin: 0;
+  padding: 3px 5px;
+  border: 0;
+  border-radius: 2px;
+  background: var(--cream);
+  font: 13px var(--serif);
+  min-width: 0;
+}
+
+.details-deeds button { border: 0; background: transparent; color: var(--berry); font-size: 18px; cursor: pointer; }
+.details-usual { font: italic 12px var(--serif); opacity: .7; margin-top: 4px; letter-spacing: 0; color: var(--ink); }
+.details-deed-actions { display: flex; gap: 6px; margin-top: 6px; }
+
+.details-deed-actions button {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 2px;
+  background: var(--cream);
+  color: var(--oxblood);
+  font: 12px var(--caps);
+  cursor: pointer;
+  box-shadow: 0 2px 0 #b9a57e;
+}

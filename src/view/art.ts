@@ -7,6 +7,7 @@
  */
 
 import { artRng, blobPath, grainOver, makeCanvas, scissorPath, valueNoise } from './paper';
+import type { GroundPalette } from './moods';
 
 export const PALETTE = {
   ink: '#2b2733',
@@ -652,7 +653,18 @@ export const drawSun = () => withMargin(512, 512, 6, ctx => {
  * The stage floor: 2048² paper sheet mapped to the 116 m playfield. Grass
  * paper, cut-paper paths, a pond, stitched field patches.
  */
-export const drawVillageGround = (paths: [number, number][][], pond: [number, number, number] | null) => {
+/** The afternoon ground, for callers that do not pass a mood. */
+const DEFAULT_GROUND: GroundPalette = {
+  base: '#7fa06a',
+  fields: ['#8aad72', '#739660', '#94b27a', '#6d8f5b', '#a0b97f', '#86a46b'],
+  tufts: 'rgba(60,95,50,.32)',
+  flowers: ['#fbf4e4', '#f4c542', '#e7a1b0', '#fbf4e4'],
+  pathEdge: '#c9a878',
+  path: '#e2c99a',
+  water: ['#4f8a9a', '#6fb0bd']
+};
+
+export const drawVillageGround = (paths: [number, number][][], pond: [number, number, number] | null, colours: GroundPalette = DEFAULT_GROUND) => {
   const size = 2048;
   const { canvas, ctx } = makeCanvas(size, size);
   const r = artRng(404);
@@ -660,10 +672,10 @@ export const drawVillageGround = (paths: [number, number][][], pond: [number, nu
   // World +z is the bottom of the painted sheet as it lies on the ground
   // plane; without this the paths and pond are painted mirrored front to back.
   const toPy = (m: number) => (-m / 116 + .5) * size;
-  ctx.fillStyle = '#7fa06a';
+  ctx.fillStyle = colours.base;
   ctx.fillRect(0, 0, size, size);
   // Patchwork fields.
-  const fieldColours = ['#8aad72', '#739660', '#94b27a', '#6d8f5b', '#a0b97f', '#86a46b'];
+  const fieldColours = colours.fields;
   for (let i = 0; i < 70; i++) {
     ctx.fillStyle = fieldColours[i % fieldColours.length];
     const cx = r() * size;
@@ -683,7 +695,7 @@ export const drawVillageGround = (paths: [number, number][][], pond: [number, nu
     ctx.setLineDash([]);
   }
   // Grass tufts.
-  ctx.strokeStyle = 'rgba(60,95,50,.32)';
+  ctx.strokeStyle = colours.tufts;
   ctx.lineWidth = 2;
   for (let i = 0; i < 1400; i++) {
     const x = r() * size;
@@ -696,13 +708,13 @@ export const drawVillageGround = (paths: [number, number][][], pond: [number, nu
   }
   // Flowers.
   for (let i = 0; i < 700; i++) {
-    ctx.fillStyle = [PALETTE.paper, PALETTE.saffron, '#e7a1b0', PALETTE.paper][i % 4];
+    ctx.fillStyle = colours.flowers[i % colours.flowers.length];
     blobPath(ctx, r() * size, r() * size, 4, 4, r, 5, 2, .5);
     ctx.fill();
   }
   // Paths: torn parchment ribbons.
   for (const path of paths) {
-    for (const [width, colour] of [[64, '#c9a878'], [50, '#e2c99a']] as const) {
+    for (const [width, colour] of [[64, colours.pathEdge], [50, colours.path]] as const) {
       ctx.strokeStyle = colour;
       ctx.lineWidth = width;
       ctx.lineCap = 'round';
@@ -723,7 +735,7 @@ export const drawVillageGround = (paths: [number, number][][], pond: [number, nu
       }
     }
   }
-  if (pond) drawPond(ctx, pond, toPx, toPy, size, r);
+  if (pond) drawPond(ctx, pond, toPx, toPy, size, r, colours.water);
   grainOver(ctx, size, size, .1, 12);
   return canvas;
 };
@@ -1105,11 +1117,11 @@ export const drawCaveArch = (fill: string, rim: string, seed: number) => {
 };
 
 /** A pond with ripples and lily pads, on the village ground sheet. */
-const drawPond = (ctx: CanvasRenderingContext2D, pond: [number, number, number], toPx: (m: number) => number, toPy: (m: number) => number, size: number, r: () => number) => {
+const drawPond = (ctx: CanvasRenderingContext2D, pond: [number, number, number], toPx: (m: number) => number, toPy: (m: number) => number, size: number, r: () => number, water: [string, string]) => {
   const [px, pz, pr] = pond;
-  ctx.fillStyle = '#4f8a9a';
+  ctx.fillStyle = water[0];
   blobPath(ctx, toPx(px), toPy(pz), pr / 116 * size + 14, pr / 116 * size * .8 + 14, r, 7, 8, 5); ctx.fill();
-  ctx.fillStyle = '#6fb0bd';
+  ctx.fillStyle = water[1];
   blobPath(ctx, toPx(px), toPy(pz), pr / 116 * size, pr / 116 * size * .8, r, 7, 8, 5); ctx.fill();
   ctx.strokeStyle = 'rgba(255,255,255,.6)';
   ctx.lineWidth = 4;
@@ -1164,5 +1176,49 @@ export const drawQuillDot = () => {
   ctx.beginPath();
   ctx.arc(32, 32, 26, 0, Math.PI * 2);
   ctx.fill();
+  return canvas;
+};
+
+/** A crescent moon with a sleepy face, for moonlit chapters. 512². */
+export const drawMoon = () => withMargin(512, 512, 6, ctx => {
+  const r = artRng(18);
+  ctx.fillStyle = '#f3ecd0';
+  blobPath(ctx, 256, 256, 190, 190, r, 0, 0, 3);
+  ctx.fill();
+  // Bite the crescent out.
+  ctx.globalCompositeOperation = 'destination-out';
+  blobPath(ctx, 340, 210, 170, 170, r, 0, 0, 3);
+  ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = 'rgba(190,178,140,.45)';
+  for (const [x, y, rad] of [[150, 330, 18], [190, 390, 12], [120, 250, 10]] as const) {
+    blobPath(ctx, x, y, rad, rad, r, 0, 0, 1);
+    ctx.fill();
+  }
+  // Closed eye and a small smile: it has seen dragons before, and slept through them.
+  ctx.strokeStyle = '#8a7a52';
+  ctx.lineWidth = 7;
+  ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(140, 250, 18, .2, Math.PI - .2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(150, 312, 14, .1, Math.PI - .4); ctx.stroke();
+}, '#d9cfa8');
+
+/** A paper snowflake: six arms, cut from a folded circle. 64². */
+export const drawSnowflake = () => {
+  const { canvas, ctx } = makeCanvas(64, 64);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 5;
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(32, 32);
+    ctx.lineTo(32 + Math.cos(a) * 26, 32 + Math.sin(a) * 26);
+    ctx.moveTo(32 + Math.cos(a) * 15, 32 + Math.sin(a) * 15);
+    ctx.lineTo(32 + Math.cos(a + .5) * 21, 32 + Math.sin(a + .5) * 21);
+    ctx.moveTo(32 + Math.cos(a) * 15, 32 + Math.sin(a) * 15);
+    ctx.lineTo(32 + Math.cos(a - .5) * 21, 32 + Math.sin(a - .5) * 21);
+    ctx.stroke();
+  }
   return canvas;
 };

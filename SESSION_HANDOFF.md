@@ -107,9 +107,17 @@ foundation for the level editor and for levels stored on the server.
   banner returns to the desk with the same view and undo history.
 - Export and import `.chapter.json`: the level file format, one prop per
   line.
-- Next: chapter details (the "In Which…" heading, mood presets for golden
-  afternoon, moonlit night and first snow, narration lines, Deeds
-  templates), then binding chapters to the server with chapter codes.
+- **Chapter details** (the desk's "Chapter details" card, all optional
+  level fields): `heading` ("In Which…", shown on the chapter card),
+  `mood` (`afternoon`, `moonlit` or `snow`; `src/view/moods.ts` holds one
+  palette per mood for sky, hills, ground paper, light, grade, sun or moon,
+  paper stars, and paper snowfall), `narration.opening` (read at the start)
+  and `narration.ending` (on The End page), and `deeds`: up to 12
+  `{ template, count, title?, flavour? }` from the templates in
+  `DEED_TEMPLATES`. Absent deeds means the usual eleven (`DEFAULT_DEEDS`,
+  worded exactly as before).
+- Next: binding chapters to the server with chapter codes, then a table of
+  contents.
 
 The painted ground used to be mirrored front to back (the paths and pond
 were drawn at −z's mirror image); the desk exposed it, and it is fixed.
@@ -269,7 +277,7 @@ and layout constraints.
 npm run iterate    # both typechecks, vite build, playwright
 ```
 
-Last verified 2026-09-23: 57 passed locally (including the desk). CI (`.github/workflows/ci.yml`)
+Last verified 2026-09-23: 62 passed locally (including the desk and chapter details). CI (`.github/workflows/ci.yml`)
 runs the typechecks, both builds and `npm run test:headless` (50 tests
 needing no drake asset) on every push.
 

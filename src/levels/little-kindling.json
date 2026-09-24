@@ -2,6 +2,8 @@
   "format": 1,
   "id": "little-kindling",
   "title": "Little Kindling",
+  "heading": "In Which Little Kindling Has a Very Bad Day",
+  "mood": "afternoon",
   "props": [
     { "kind": "maypole", "x": 0, "z": 0, "yaw": 0, "size": 1, "variant": 0 },
     { "kind": "cottage", "x": 6.18, "z": 16.91, "yaw": -159.9, "size": 1.14, "variant": 0 },

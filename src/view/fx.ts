@@ -15,12 +15,13 @@ import {
   drawGhost,
   drawPaperFlame,
   drawSmoke,
+  drawSnowflake,
   drawSoftDot,
   PALETTE
 } from './art';
 import { canvasTexture, centredQuadMesh, cutoutMaterial, glowMaterial, paintMaterial, smokeMaterial } from './paper';
 
-export type ParticleKind = 'breath' | 'flame' | 'paperFlame' | 'ember' | 'smoke' | 'ash' | 'confetti' | 'ghost' | 'spark' | 'dust';
+export type ParticleKind = 'breath' | 'flame' | 'paperFlame' | 'ember' | 'smoke' | 'ash' | 'confetti' | 'ghost' | 'spark' | 'dust' | 'snow';
 
 type Particle = {
   entity: pc.Entity;
@@ -63,6 +64,7 @@ export class Fx {
     const ash = cutoutMaterial(canvasTexture(drawAshFlake(4)), .25);
     const ghost = cutoutMaterial(canvasTexture(drawGhost()), .9);
     const confetti = cutoutMaterial(canvasTexture(drawConfetti(PALETTE.paper)), .6);
+    const snow = paintMaterial(canvasTexture(drawSnowflake(), { softAlpha: true }), true);
     (confetti as pc.StandardMaterial).diffuseMap = null;
     this.specs = {
       breath: { material: breath },
@@ -74,7 +76,8 @@ export class Fx {
       dust: { material: dust },
       ash: { material: ash, shadows: true },
       ghost: { material: ghost, shadows: true },
-      confetti: { material: confetti }
+      confetti: { material: confetti },
+      snow: { material: snow }
     };
     this.confettiMaterials = [PALETTE.berry, PALETTE.saffron, PALETTE.teal, PALETTE.rust, PALETTE.paper, PALETTE.plum]
       .map(colour => cutoutMaterial(canvasTexture(drawConfetti(colour)), .6));
@@ -215,6 +218,29 @@ export class Fx {
     }
   }
 
+  /**
+   * Paper snow around the camera, at `rate` flakes a second. Flakes spawn in
+   * a box above and ahead of the view, so the weather is only where it can
+   * be seen.
+   */
+  snowfall(camera: pc.Entity, rate: number, dt: number) {
+    let n = rate * dt;
+    const at = camera.getPosition();
+    const forward = camera.forward;
+    while (n > 0) {
+      if (Math.random() < n) {
+        const p = new pc.Vec3(
+          at.x + forward.x * 14 + (Math.random() - .5) * 44,
+          at.y + 6 + Math.random() * 10,
+          at.z + forward.z * 14 + (Math.random() - .5) * 44
+        );
+        this.spawn('snow', p, new pc.Vec3((Math.random() - .5) * .8, -1.6 - Math.random() * .9, (Math.random() - .5) * .8),
+          { life: 9, size: .16 + Math.random() * .14, drag: 0, gravity: 0, spin: (Math.random() - .5) * 140 });
+      }
+      n -= 1;
+    }
+  }
+
   ghost(at: pc.Vec3) {
     this.spawn('ghost', at.clone().add(new pc.Vec3(0, .8, 0)), new pc.Vec3(0, 1.1, 0), { life: 3.2, size: .8, drag: 0, spin: 0 });
     for (let i = 0; i < 10; i++) {
@@ -255,6 +281,8 @@ export class Fx {
         p.velocity.set(p.velocity.x * .3, 0, p.velocity.z * .3);
         p.spin *= .2;
       }
+      // Snow settles into the page rather than falling through it.
+      if (p.kind === 'snow' && this.scratch.y < .05) p.life = 0;
       p.entity.setPosition(this.scratch);
       p.angle += p.spin * dt;
       const t = 1 - p.life / p.maxLife;

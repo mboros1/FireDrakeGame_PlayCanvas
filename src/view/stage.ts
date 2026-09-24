@@ -29,6 +29,8 @@ import {
   drawStall,
   drawStump,
   drawSun,
+  drawMoon,
+  drawStar,
   drawTree,
   drawVillageGround,
   PALETTE,
@@ -52,6 +54,7 @@ import {
 import { PropKind, PropSim, PropState } from '../sim/props';
 import { World } from '../sim/world';
 import type { LevelDefinition } from '../sim/level';
+import { moodOf, type GroundPalette } from './moods';
 
 // ── Shared texture cache: drawn once per session, reused across scene loads ──
 
@@ -76,8 +79,8 @@ const TREE_STYLES: TreeStyle[] = ['lollipop', 'pine', 'cloud', 'poplar'];
  */
 const grounds = new Map<string, pc.Texture>();
 const GROUNDS_KEPT = 3;
-const groundTexture = (level: Pick<LevelDefinition, 'paths' | 'pond'>) => {
-  const key = JSON.stringify([level.paths, level.pond]);
+const groundTexture = (level: Pick<LevelDefinition, 'paths' | 'pond'>, colours?: GroundPalette) => {
+  const key = JSON.stringify([level.paths, level.pond, colours?.base]);
   let texture = grounds.get(key);
   if (texture) {
     // Refresh recency.
@@ -85,7 +88,7 @@ const groundTexture = (level: Pick<LevelDefinition, 'paths' | 'pond'>) => {
     grounds.set(key, texture);
     return texture;
   }
-  texture = canvasTexture(drawVillageGround(level.paths, level.pond), { softAlpha: true });
+  texture = canvasTexture(drawVillageGround(level.paths, level.pond, colours), { softAlpha: true });
   grounds.set(key, texture);
   while (grounds.size > GROUNDS_KEPT) {
     const [oldKey, old] = grounds.entries().next().value!;
@@ -318,15 +321,17 @@ export class Stage {
 
   buildVillage(layout: LevelDefinition, props: PropSim[]) {
     const root = this.root;
-    this.buildSky([[0, '#f6b489'], [.18, '#f7cfa4'], [.45, '#b9d3d0'], [1, '#6f9fbf']], 0);
+    const moodName = layout.mood ?? 'afternoon';
+    const mood = moodOf(layout.mood);
+    this.buildSky(mood.sky, `village:${moodName}`);
 
     // Stage floor, then the table beyond it.
     const ground = new pc.Entity('Village ground');
     ground.addComponent('render', { type: 'plane', castShadows: false, receiveShadows: true });
     // One material, its map swapped per level: materials are not freed with
     // their textures, and the desk makes many grounds.
-    const groundMaterial = once('mat:ground', () => cardMaterial(groundTexture(layout), .05, false));
-    const painted = groundTexture(layout);
+    const groundMaterial = once('mat:ground', () => cardMaterial(groundTexture(layout, mood.ground), .05, false));
+    const painted = groundTexture(layout, mood.ground);
     if (groundMaterial.diffuseMap !== painted) {
       groundMaterial.diffuseMap = painted;
       groundMaterial.emissiveMap = painted;
@@ -338,8 +343,8 @@ export class Stage {
 
     const beyond = new pc.Entity('Meadow beyond the page');
     beyond.addComponent('render', { type: 'plane', castShadows: false, receiveShadows: false });
-    const beyondMaterial = once('mat:beyond', () => {
-      const m = cardMaterial(canvasTexture(drawPlainCard('#7a9c68', 8), { softAlpha: true, repeat: true }), .1, false);
+    const beyondMaterial = once(`mat:beyond:${moodName}`, () => {
+      const m = cardMaterial(canvasTexture(drawPlainCard(mood.ground.fields[1], 8), { softAlpha: true, repeat: true }), .1, false);
       m.diffuseMapTiling = new pc.Vec2(40, 40);
       m.emissiveMapTiling = new pc.Vec2(40, 40);
       m.update();
@@ -351,32 +356,48 @@ export class Stage {
     root.addChild(beyond);
 
     // Paper hills, nearest first, fading towards the sky.
-    const hillLayers: [number, number, string, string][] = [
-      [74, 12, '#5f8a5a', '#86ad76'],
-      [100, 20, '#7ea283', '#a4c3a0'],
-      [135, 30, '#a3bfae', '#c6d9cb'],
-      [180, 44, '#c7d6cc', '#e1e7de']
-    ];
-    hillLayers.forEach(([radius, height, fill, rim], i) => {
-      const texture = once(`hills:${i}`, () => canvasTexture(drawHills(fill, rim, i * 3 + 1)));
+    const hillShapes: [number, number][] = [[74, 12], [100, 20], [135, 30], [180, 44]];
+    hillShapes.forEach(([radius, height], i) => {
+      const [fill, rim] = mood.hills[i];
+      const texture = once(`hills:${moodName}:${i}`, () => canvasTexture(drawHills(fill, rim, i * 3 + 1)));
       const material = i === 0 ? cutoutMaterial(texture, .45) : paintMaterial(texture, true);
       const entity = meshEntity(`Hills ${i}`, ringMesh(radius, height, 64, 3 + i), material, root, { castShadows: false, receiveShadows: i === 0 });
       entity.setLocalEulerAngles(0, i * 37, 0);
     });
 
-    // Sun and clouds, all hung on visible strings from the top of the theatre.
-    const sunMaterial = once('mat:sun', () => paintMaterial(canvasTexture(drawSun()), true));
-    const sun = meshEntity('Paper sun', quadMesh(), sunMaterial, root, { castShadows: false, receiveShadows: false });
-    sun.setLocalScale(48, 48, 1);
-    sun.setPosition(-110, 52, -190);
-    sun.lookAt(0, 70, 0);
-    sun.rotateLocal(0, 180, 0);
-    this.bobbers.push({ entity: sun, phase: 0, base: sun.getLocalPosition().clone(), amount: 1.2 });
-    this.hang(sun.getPosition().clone().add(new pc.Vec3(0, 47, 0)), 200);
+    // Sun or moon, stars and clouds, all hung on visible strings from the
+    // top of the theatre.
+    if (mood.celestial !== 'none') {
+      const isMoon = mood.celestial === 'moon';
+      const material = once(`mat:${mood.celestial}`, () => paintMaterial(canvasTexture(isMoon ? drawMoon() : drawSun()), true));
+      const body = meshEntity(isMoon ? 'Paper moon' : 'Paper sun', quadMesh(), material, root, { castShadows: false, receiveShadows: false });
+      const scale = isMoon ? 40 : 48;
+      body.setLocalScale(scale, scale, 1);
+      body.setPosition(isMoon ? 120 : -110, isMoon ? 60 : 52, -190);
+      body.lookAt(0, 70, 0);
+      body.rotateLocal(0, 180, 0);
+      this.bobbers.push({ entity: body, phase: 0, base: body.getLocalPosition().clone(), amount: 1.2 });
+      this.hang(body.getPosition().clone().add(new pc.Vec3(0, scale - 1, 0)), 200);
+    }
+    if (mood.stars) {
+      const starMaterial = once('mat:sky-star', () => paintMaterial(canvasTexture(drawStar()), true));
+      for (let i = 0; i < 26; i++) {
+        const a = (i / 26) * Math.PI * 2 + (i % 3) * .21;
+        const radius = 120 + (i % 5) * 18;
+        const star = meshEntity('Paper star', quadMesh(), starMaterial, root, { castShadows: false, receiveShadows: false });
+        const size = 3 + (i % 4) * 1.4;
+        star.setLocalScale(size, size, 1);
+        star.setPosition(Math.sin(a) * radius, 44 + (i * 37 % 40), Math.cos(a) * radius);
+        star.lookAt(0, star.getPosition().y, 0);
+        star.rotateLocal(0, 180, 0);
+        this.bobbers.push({ entity: star, phase: i * .9, base: star.getLocalPosition().clone(), amount: .8 });
+        this.hang(star.getPosition().clone().add(new pc.Vec3(0, size - .3, 0)), 180);
+      }
+    }
 
     const cloudMaterials = [1, 2, 3].map(s => once(`mat:cloud${s}`, () => paintMaterial(canvasTexture(drawCloud(s * 11)), true)));
-    for (let i = 0; i < 11; i++) {
-      const a = (i / 11) * Math.PI * 2 + .4;
+    for (let i = 0; i < mood.clouds; i++) {
+      const a = (i / mood.clouds) * Math.PI * 2 + .4;
       const radius = 110 + (i % 3) * 25;
       const cloud = meshEntity('Cloud', quadMesh(), cloudMaterials[i % 3], root, { castShadows: false, receiveShadows: false });
       const scale = 18 + (i % 4) * 5;
@@ -571,7 +592,7 @@ export class Stage {
 
   buildCave() {
     const root = this.root;
-    this.buildSky([[0, '#1a0f1c'], [.5, '#2a1424'], [1, '#12091a']], 1);
+    this.buildSky([[0, '#1a0f1c'], [.5, '#2a1424'], [1, '#12091a']], 'cave');
 
     const ground = new pc.Entity('Cave floor');
     ground.addComponent('render', { type: 'plane', castShadows: false });
@@ -696,7 +717,7 @@ export class Stage {
     this.gateGlow = glow;
   }
 
-  private buildSky(stops: [number, string][], key: number) {
+  private buildSky(stops: [number, string][], key: string) {
     const texture = once(`sky:${key}`, () => canvasTexture(drawSky(stops), { softAlpha: true }));
     const material = paintMaterial(texture);
     material.depthWrite = false;
@@ -781,7 +802,7 @@ const drawHoard = () => {
  */
 export async function prewarmVillage(layout: LevelDefinition) {
   const yieldToFrame = () => new Promise(resolve => setTimeout(resolve, 0));
-  groundTexture(layout);
+  groundTexture(layout, moodOf(layout.mood).ground);
   await yieldToFrame();
   const seen = new Set<number>();
   for (const p of layout.props) {

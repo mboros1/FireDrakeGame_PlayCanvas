@@ -76,3 +76,30 @@ test('seats beyond the listed spawns still get distinct spots', () => {
   const b = spawnFor(level, 1);
   expect(Math.hypot(a.x - b.x, a.z - b.z)).toBeGreaterThan(2);
 });
+
+test('chapter details are optional, and validated when present', () => {
+  const plain = base();
+  expect(problemsOf(plain)).toEqual([]);
+
+  const written = base();
+  written.mood = 'moonlit';
+  written.heading = 'In Which the Moon Regrets Everything';
+  written.narration = { opening: 'That night, all was quiet.', ending: 'And so to bed.' };
+  written.deeds = [{ template: 'burn-haystacks', count: 3 }, { template: 'chain', count: 5, title: 'Keep it going' }];
+  expect(problemsOf(written)).toEqual([]);
+  expect(validateLevel(written).mood).toBe('moonlit');
+
+  const bad = base();
+  bad.mood = 'eclipse';
+  bad.heading = 'x'.repeat(200);
+  bad.narration = { opening: 'y'.repeat(500) };
+  bad.deeds = [{ template: 'summon-bees', count: 1 }, { template: 'chain', count: 0 }, { template: 'ghosts', count: 2, title: 'z'.repeat(60) }];
+  expect(problemsOf(bad)).toEqual(expect.arrayContaining([
+    'mood must be one of afternoon, moonlit, snow',
+    'heading must be at most 100 characters',
+    'narration lines must be at most 240 characters',
+    'deed 0: unknown goal summon-bees',
+    'deed 1: count must be 1-500',
+    'deed 2: title must be at most 48 characters'
+  ]));
+});

@@ -121,3 +121,34 @@ test('write a chapter at the desk, read it, and come back', async ({ page }) => 
 
   expect(errors).toEqual([]);
 });
+
+test('chapter details: heading, mood and deeds carry into the page', async ({ page }) => {
+  await page.goto('/?desk=1');
+  await page.waitForFunction(() => (window.__FIRE_DRAKE_DEBUG__?.getState() as unknown as Game)?.desk?.open, undefined, { timeout: 60_000 });
+  await page.locator('[data-action="copy"]').click();
+  await page.locator('[data-action="details"]').click();
+  await page.locator('#details-heading').fill('In Which Winter Comes Early');
+  await page.locator('#details-heading').press('Tab');
+  await page.locator('#details-opening').fill('Snow fell on Little Kindling, which was about to become the least of its problems.');
+  await page.locator('#details-opening').press('Tab');
+  await page.locator('[data-mood="snow"]').click();
+  // Make the deeds this chapter's own: add one, then retarget it.
+  await page.locator('[data-deed-action="add"]').click();
+  const row = page.locator('.details-deeds li[data-deed]').last();
+  await row.locator('select').selectOption('burn-haystacks');
+  await row.locator('.deed-count').fill('2');
+  await row.locator('.deed-count').press('Tab');
+
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('fire-drake:chapter-drafts') ?? '{}').drafts[0].level);
+  expect(stored.heading).toBe('In Which Winter Comes Early');
+  expect(stored.mood).toBe('snow');
+  expect(stored.narration.opening).toContain('Snow fell');
+  expect(stored.deeds.at(-1)).toEqual({ template: 'burn-haystacks', count: 2 });
+  expect(stored.deeds.length).toBe(12);
+
+  await page.locator('[data-action="read"]').click();
+  await expect.poll(async () => (await game(page)).scene).toBe('forest');
+  await expect(page.locator('#objective')).toHaveText('In Which Winter Comes Early');
+  await expect(page.locator('#narrator')).toContainText('Snow fell');
+  await expect(page.locator('#deeds-count')).toHaveText('0 of 12');
+});

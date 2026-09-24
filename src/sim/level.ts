@@ -27,6 +27,43 @@ export const LEVEL_LIMITS = {
 export type PropPlacement = { kind: PropKind; x: number; z: number; yaw: number; size: number; variant: number };
 export type Spawn = { x: number; z: number; yaw: number };
 
+/** How a chapter looks and feels: sky, ground, light. */
+export const MOODS = ['afternoon', 'moonlit', 'snow'] as const;
+export type Mood = typeof MOODS[number];
+
+/**
+ * Goal templates a chapter can ask for, each with a count. The view owns
+ * what counts toward them; the level only names them, so a chapter file
+ * stays data.
+ */
+export const DEED_TEMPLATES = [
+  'ignite-dwarves',
+  'launch-dwarves',
+  'relaunch-dwarf',
+  'burn-cottages',
+  'flatten-cottages',
+  'undo-cottages',
+  'burn-haystacks',
+  'burn-stalls',
+  'burn-trees',
+  'burn-maypole',
+  'chain',
+  'ghosts'
+] as const;
+export type DeedTemplate = typeof DEED_TEMPLATES[number];
+
+/** One goal: a template, how many, and optionally the author's own words. */
+export type DeedSpec = { template: DeedTemplate; count: number; title?: string; flavour?: string };
+
+export const CHAPTER_LIMITS = {
+  heading: 100,
+  narration: 240,
+  deeds: 12,
+  deedTitle: 48,
+  deedFlavour: 80,
+  deedCount: 500
+} as const;
+
 export type LevelDefinition = {
   format: typeof LEVEL_FORMAT;
   /** URL-safe identifier: `little-kindling`. */
@@ -39,6 +76,16 @@ export type LevelDefinition = {
   pond: [number, number, number] | null;
   /** One per seat, first is single player. At least one. */
   spawns: Spawn[];
+
+  // Chapter details, all optional: a level without them plays as before.
+  /** Defaults to 'afternoon'. */
+  mood?: Mood;
+  /** The chapter card's line: "In Which the Bakery Learns Humility". */
+  heading?: string;
+  /** Read aloud at the start, and printed on The End page. */
+  narration?: { opening?: string; ending?: string };
+  /** The chapter's goals; absent means the usual deeds. */
+  deeds?: DeedSpec[];
 };
 
 export class LevelError extends Error {
@@ -122,6 +169,25 @@ export function validateLevel(raw: unknown): LevelDefinition {
   else level.spawns.forEach((s, i) => {
     if (!s || !inBounds(s.x, s.z) || !finite(s.yaw)) problems.push(`spawn ${i}: needs x, z and yaw on the page`);
   });
+
+  const text = (value: unknown, max: number) => value === undefined || (typeof value === 'string' && value.length <= max);
+  if (level.mood !== undefined && !(MOODS as readonly string[]).includes(level.mood)) problems.push(`mood must be one of ${MOODS.join(', ')}`);
+  if (!text(level.heading, CHAPTER_LIMITS.heading)) problems.push(`heading must be at most ${CHAPTER_LIMITS.heading} characters`);
+  if (level.narration !== undefined) {
+    const n = level.narration;
+    if (!n || typeof n !== 'object' || !text(n.opening, CHAPTER_LIMITS.narration) || !text(n.ending, CHAPTER_LIMITS.narration)) {
+      problems.push(`narration lines must be at most ${CHAPTER_LIMITS.narration} characters`);
+    }
+  }
+  if (level.deeds !== undefined) {
+    if (!Array.isArray(level.deeds) || level.deeds.length > CHAPTER_LIMITS.deeds) problems.push(`at most ${CHAPTER_LIMITS.deeds} deeds`);
+    else level.deeds.forEach((d, i) => {
+      if (!d || !(DEED_TEMPLATES as readonly string[]).includes(d.template)) problems.push(`deed ${i}: unknown goal ${String(d?.template)}`);
+      if (!Number.isInteger(d?.count) || d.count < 1 || d.count > CHAPTER_LIMITS.deedCount) problems.push(`deed ${i}: count must be 1-${CHAPTER_LIMITS.deedCount}`);
+      if (!text(d?.title, CHAPTER_LIMITS.deedTitle)) problems.push(`deed ${i}: title must be at most ${CHAPTER_LIMITS.deedTitle} characters`);
+      if (!text(d?.flavour, CHAPTER_LIMITS.deedFlavour)) problems.push(`deed ${i}: note must be at most ${CHAPTER_LIMITS.deedFlavour} characters`);
+    });
+  }
 
   if (problems.length > 0) throw new LevelError(problems);
   const file = level as LevelFile;

@@ -12,7 +12,9 @@
  */
 
 import * as pc from 'playcanvas';
-import { LEVEL_LIMITS, LevelError, validateLevel, toLevelFile, type LevelDefinition, type PropPlacement } from '../sim/level';
+import { CHAPTER_LIMITS, DEED_TEMPLATES, LEVEL_LIMITS, LevelError, MOODS, validateLevel, toLevelFile, type DeedSpec, type DeedTemplate, type LevelDefinition, type Mood, type PropPlacement } from '../sim/level';
+import { DEFAULT_DEEDS, deedWording } from '../view/deeds';
+import { MOOD_PALETTES } from '../view/moods';
 import { PROP_SPECS, PropKind } from '../sim/props';
 import { drawBookmark, drawQuillDot, drawSelectionRing, PALETTE } from '../view/art';
 import { canvasTexture, centredQuadMesh, meshEntity, paintMaterial, quadMesh } from '../view/paper';
@@ -96,6 +98,7 @@ export class Desk {
   private readonly status: HTMLDivElement;
   private readonly fileInput: HTMLInputElement;
 
+  private readonly details: HTMLElement;
   private readonly ray = { from: new pc.Vec3(), to: new pc.Vec3() };
   private readonly canvas: HTMLCanvasElement;
 
@@ -125,11 +128,36 @@ export class Desk {
           <button data-action="import">Import</button>
           <button data-action="undo" title="⌘Z">Undo</button>
           <button data-action="redo" title="⇧⌘Z">Redo</button>
+          <button data-action="details">Chapter details</button>
           <button data-action="read" class="desk-read">Read this page ▸</button>
           <button data-action="close">Close the desk</button>
         </div>
       </header>
       <aside class="desk-notes" id="desk-notes"></aside>
+      <section class="desk-details hidden" id="desk-details">
+        <div class="details-title">Chapter details</div>
+        <label class="details-field">Heading
+          <input id="details-heading" maxlength="${CHAPTER_LIMITS.heading}" placeholder="In Which…" spellcheck="true" />
+        </label>
+        <div class="details-field">Mood
+          <div class="details-moods">
+            ${MOODS.map(m => `<button data-mood="${m}" style="--sky:${MOOD_PALETTES[m].sky[1][1]};--ground:${MOOD_PALETTES[m].ground.base}">${MOOD_NAMES[m]}</button>`).join('')}
+          </div>
+        </div>
+        <label class="details-field">The narrator opens with
+          <textarea id="details-opening" maxlength="${CHAPTER_LIMITS.narration}" rows="2" placeholder="Meanwhile, in the village…"></textarea>
+        </label>
+        <label class="details-field">…and The End page says
+          <textarea id="details-ending" maxlength="${CHAPTER_LIMITS.narration}" rows="2" placeholder="of Little Kindling, and of this particular book."></textarea>
+        </label>
+        <div class="details-field">Deeds
+          <ol class="details-deeds" id="details-deeds"></ol>
+          <div class="details-deed-actions">
+            <button data-deed-action="add">Add a deed</button>
+            <button data-deed-action="usual">Use the usual deeds</button>
+          </div>
+        </div>
+      </section>
       <aside class="desk-inspector hidden" id="desk-inspector"></aside>
       <div class="desk-status" id="desk-status"></div>
       <nav class="desk-tray" id="desk-tray">
@@ -149,7 +177,9 @@ export class Desk {
     this.inspector = this.root.querySelector('#desk-inspector')!;
     this.status = this.root.querySelector('#desk-status')!;
     this.fileInput = this.root.querySelector('#desk-file')!;
+    this.details = this.root.querySelector('#desk-details')!;
     this.wireUi();
+    this.wireDetails();
     this.wirePointer();
     this.wireKeys();
   }
@@ -608,6 +638,10 @@ export class Desk {
         case 'undo': this.undo(); break;
         case 'redo': this.redo(); break;
         case 'read': this.readPage(); break;
+        case 'details':
+          this.root.querySelector('#desk-details')!.classList.toggle('hidden');
+          this.renderDetails();
+          break;
         case 'close': this.host.close(); break;
       }
     });
@@ -700,6 +734,8 @@ export class Desk {
 
     this.status.textContent = `${this.level.props.length} cutouts · ${cottages} cottages · ${this.level.paths.length} paths · ${this.level.pond ? 'a pond' : 'no pond'} · ${this.level.spawns.length} bookmark${this.level.spawns.length === 1 ? '' : 's'}`;
 
+    this.renderDetails();
+
     if (this.selected !== null) {
       const p = this.level.props[this.selected];
       const name = KIND_ORDER.find(([k]) => k === p.kind)?.[1] ?? 'Cutout';
@@ -710,6 +746,96 @@ export class Desk {
     } else {
       this.inspector.classList.add('hidden');
     }
+  }
+
+  // ── Chapter details ──────────────────────────────────────────────────────
+
+  setMood(mood: Mood) {
+    if ((this.level.mood ?? 'afternoon') === mood) return;
+    this.commit(level => { level.mood = mood; });
+  }
+
+  private wireDetails() {
+    const heading = this.details.querySelector<HTMLInputElement>('#details-heading')!;
+    const opening = this.details.querySelector<HTMLTextAreaElement>('#details-opening')!;
+    const ending = this.details.querySelector<HTMLTextAreaElement>('#details-ending')!;
+    heading.addEventListener('change', () => {
+      const value = heading.value.trim();
+      this.commit(level => { level.heading = value || undefined; }, false);
+    });
+    const narration = (key: 'opening' | 'ending', field: HTMLTextAreaElement) => field.addEventListener('change', () => {
+      const value = field.value.trim();
+      this.commit(level => {
+        level.narration = { ...level.narration, [key]: value || undefined };
+        if (!level.narration.opening && !level.narration.ending) level.narration = undefined;
+      }, false);
+    });
+    narration('opening', opening);
+    narration('ending', ending);
+
+    this.details.addEventListener('click', event => {
+      const target = event.target as HTMLElement;
+      const moodButton = target.closest<HTMLButtonElement>('[data-mood]');
+      if (moodButton) {
+        moodButton.blur();
+        this.setMood(moodButton.dataset.mood as Mood);
+        return;
+      }
+      const action = target.closest<HTMLButtonElement>('[data-deed-action]')?.dataset.deedAction;
+      if (action === 'add') {
+        this.commit(level => {
+          const deeds = level.deeds ?? structuredClone(DEFAULT_DEEDS);
+          if (deeds.length < CHAPTER_LIMITS.deeds) deeds.push({ template: 'ignite-dwarves', count: 3 });
+          level.deeds = deeds;
+        }, false);
+      } else if (action === 'usual') {
+        this.commit(level => { level.deeds = undefined; }, false);
+      }
+      const remove = target.closest<HTMLButtonElement>('[data-deed-remove]');
+      if (remove) {
+        const index = Number(remove.dataset.deedRemove);
+        this.commit(level => {
+          const deeds = level.deeds ?? structuredClone(DEFAULT_DEEDS);
+          deeds.splice(index, 1);
+          level.deeds = deeds;
+        }, false);
+      }
+    });
+    // Deed rows edit in place; commit when a field settles.
+    this.details.addEventListener('change', event => {
+      const row = (event.target as HTMLElement).closest<HTMLLIElement>('[data-deed]');
+      if (!row) return;
+      const index = Number(row.dataset.deed);
+      const template = row.querySelector<HTMLSelectElement>('select')!.value as DeedTemplate;
+      const count = Math.max(1, Math.min(CHAPTER_LIMITS.deedCount, Math.round(Number(row.querySelector<HTMLInputElement>('.deed-count')!.value) || 1)));
+      const title = row.querySelector<HTMLInputElement>('.deed-title-input')!.value.trim().slice(0, CHAPTER_LIMITS.deedTitle);
+      this.commit(level => {
+        const deeds = level.deeds ?? structuredClone(DEFAULT_DEEDS);
+        deeds[index] = { template, count, ...(title ? { title } : {}) };
+        level.deeds = deeds;
+      }, false);
+    });
+  }
+
+  private renderDetails() {
+    if (this.details.classList.contains('hidden')) return;
+    const active = document.activeElement;
+    const heading = this.details.querySelector<HTMLInputElement>('#details-heading')!;
+    const opening = this.details.querySelector<HTMLTextAreaElement>('#details-opening')!;
+    const ending = this.details.querySelector<HTMLTextAreaElement>('#details-ending')!;
+    if (active !== heading) heading.value = this.level.heading ?? '';
+    if (active !== opening) opening.value = this.level.narration?.opening ?? '';
+    if (active !== ending) ending.value = this.level.narration?.ending ?? '';
+    const mood = this.level.mood ?? 'afternoon';
+    for (const button of this.details.querySelectorAll<HTMLButtonElement>('[data-mood]')) {
+      button.classList.toggle('active', button.dataset.mood === mood);
+    }
+    const custom = this.level.deeds !== undefined;
+    const deeds = this.level.deeds ?? DEFAULT_DEEDS;
+    const list = this.details.querySelector<HTMLOListElement>('#details-deeds')!;
+    if (list.contains(active)) return;
+    list.innerHTML = deeds.map((deed, i) => deedRow(deed, i)).join('') +
+      (custom ? '' : '<li class="details-usual">These are the usual deeds. Change any to make them this chapter\'s own.</li>');
   }
 
   // ── Markers ──────────────────────────────────────────────────────────────
@@ -790,6 +916,37 @@ export class Desk {
     this.quillDots = [];
   }
 }
+
+const MOOD_NAMES: Record<Mood, string> = {
+  afternoon: 'Golden afternoon',
+  moonlit: 'Moonlit night',
+  snow: 'First snow'
+};
+
+const TEMPLATE_NAMES: Record<DeedTemplate, string> = {
+  'ignite-dwarves': 'Set dwarves alight',
+  'launch-dwarves': 'Launch dwarves',
+  'relaunch-dwarf': 'Launch one dwarf twice',
+  'burn-cottages': 'Burn cottages',
+  'flatten-cottages': 'Flatten cottages',
+  'undo-cottages': 'Undo cottages, either way',
+  'burn-haystacks': 'Burn haystacks',
+  'burn-stalls': 'Burn market stalls',
+  'burn-trees': 'Burn trees',
+  'burn-maypole': 'Burn the maypole',
+  'chain': 'Reach a chain of',
+  'ghosts': 'Make ghosts'
+};
+
+const deedRow = (deed: DeedSpec, index: number) => {
+  const wording = deedWording(deed);
+  return `<li data-deed="${index}">
+    <select aria-label="Goal">${DEED_TEMPLATES.map(t => `<option value="${t}"${t === deed.template ? ' selected' : ''}>${TEMPLATE_NAMES[t]}</option>`).join('')}</select>
+    <input class="deed-count" type="number" min="1" max="${CHAPTER_LIMITS.deedCount}" value="${deed.count}" aria-label="How many" />
+    <input class="deed-title-input" maxlength="${CHAPTER_LIMITS.deedTitle}" value="${escapeHtml(deed.title ?? '')}" placeholder="${escapeHtml(wording.title)}" aria-label="Title" />
+    <button data-deed-remove="${index}" aria-label="Remove">×</button>
+  </li>`;
+};
 
 const TOOL_TIPS: Record<DeskTool, string> = {
   select: 'Click a cutout to pick it up; drag to move it. Drag a bookmark to move where a drake enters.',

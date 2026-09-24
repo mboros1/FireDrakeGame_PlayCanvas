@@ -10,6 +10,7 @@ import * as pc from 'playcanvas';
 import type { RampageEvent } from '../sim/rampage';
 import { PropKind } from '../sim/props';
 import { Deeds } from './deeds';
+import type { DeedSpec } from '../sim/level';
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
@@ -113,6 +114,7 @@ export class Hud {
   private readonly deedsCount = $<HTMLSpanElement>('#deeds-count');
   private readonly theEnd = $<HTMLDivElement>('#the-end');
   private ended = false;
+  private ending = 'of Little Kindling, and of this particular book.';
   private readonly pops: Pop[] = [];
   private shownScore = 0;
   private tierIndex = 0;
@@ -164,8 +166,9 @@ export class Hud {
   }
 
   /** New chapter: fresh deeds, fresh score, the end un-ended. */
-  resetRun() {
-    this.deeds.reset();
+  resetRun(deeds?: DeedSpec[], ending?: string) {
+    this.deeds.reset(deeds);
+    this.ending = ending ?? 'of Little Kindling, and of this particular book.';
     this.ended = false;
     this.theEnd.classList.remove('visible');
     this.shownScore = 0;
@@ -180,6 +183,7 @@ export class Hud {
     if (this.ended) return;
     this.ended = true;
     const t = this.deeds.tally;
+    $('.end-sub').textContent = this.ending;
     $('#end-score').textContent = String(score);
     $('#end-tier').textContent = this.tier.textContent ?? '';
     $('#end-toasted').textContent = String(t.ignited);

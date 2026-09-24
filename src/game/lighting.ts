@@ -5,6 +5,7 @@
 
 import * as pc from 'playcanvas';
 import { GRADES, type PostStack } from '../view/post';
+import { MOOD_PALETTES, type MoodPalette } from '../view/moods';
 
 export class Lighting {
   readonly sun = new pc.Entity('Sun');
@@ -29,20 +30,20 @@ export class Lighting {
     app.root.addChild(this.fill);
   }
 
-  /** Golden-hour festival light. */
-  village() {
+  /** A chapter's light, from its mood: golden afternoon by default. */
+  village(mood: MoodPalette = MOOD_PALETTES.afternoon) {
     const scene = this.app.scene;
-    this.camera.camera!.clearColor = new pc.Color(.96, .78, .6);
-    scene.ambientLight = new pc.Color(.42, .4, .44);
+    this.camera.camera!.clearColor = mood.clear;
+    scene.ambientLight = mood.ambient;
     scene.fog.type = pc.FOG_LINEAR;
-    scene.fog.color = new pc.Color(.93, .8, .68);
-    scene.fog.start = 60;
-    scene.fog.end = 230;
-    this.sun.light!.color = new pc.Color(1, .84, .62);
-    this.sun.light!.intensity = 2.3;
-    this.sun.setEulerAngles(40, 30, 0);
-    this.fill.light!.intensity = .5;
-    this.post.apply(GRADES.village);
+    scene.fog.color = mood.fog.colour;
+    scene.fog.start = mood.fog.start;
+    scene.fog.end = mood.fog.end;
+    this.sun.light!.color = mood.sun.colour;
+    this.sun.light!.intensity = mood.sun.intensity;
+    this.sun.setEulerAngles(mood.sun.pitch, mood.sun.yaw, 0);
+    this.fill.light!.intensity = mood.fill;
+    this.post.apply(mood.grade);
   }
 
   /** Lava-lit gloom. */

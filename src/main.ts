@@ -37,6 +37,7 @@ import { loadExtractedSector, type ExtractedSector } from './game/extracted';
 import { installDebugApi, type SceneName } from './game/debug';
 import { Desk } from './editor/desk';
 import type { LevelDefinition } from './sim/level';
+import { moodOf, type MoodPalette } from './view/moods';
 
 type SavedState = { scene: SceneName; x: number; z: number; yaw: number };
 
@@ -99,6 +100,8 @@ const extracted: ExtractedSector = { objects: 0, sourceLevel: null, loadError: n
 let currentLevel: LevelDefinition = getLevel();
 /** True while reading a draft from the desk: B goes back to it. */
 let readingDraft = false;
+/** The chapter's mood, for weather in the frame loop. */
+let mood: MoodPalette = moodOf(undefined);
 let desk: Desk | null = null;
 const draftBanner = document.createElement('button');
 draftBanner.className = 'draft-banner hidden';
@@ -168,6 +171,7 @@ function clearWorld() {
 function buildCave() {
   clearWorld();
   sceneName = 'cave';
+  mood = moodOf(undefined);
   lighting.cave();
   rampage = new Rampage(simWorld, simRng, drakeSim, undefined, false);
   stage.buildCave();
@@ -182,9 +186,10 @@ function buildForest(draft?: LevelDefinition) {
   clearWorld();
   sceneName = 'forest';
   telemetry.note({ scene: 'forest', together: party !== null });
-  lighting.village();
   // Together, the room decides the level; alone, it is the default or a draft.
   const level = party ? getLevel(party.session.level || undefined) : currentLevel;
+  mood = moodOf(level.mood);
+  lighting.village(mood);
   // Together, this is a replica of the server's village: same props from the
   // same level, dwarves by snapshot, the local drake predicted.
   rampage = new Rampage(simWorld, simRng, drakeSim, level, true, party !== null);
@@ -193,16 +198,18 @@ function buildForest(draft?: LevelDefinition) {
   drakeSim.place(simWorld, start.x, start.z, start.yaw);
   rig.yaw = start.yaw;
   party?.onRebuilt();
-  hud.setChapter('Chapter the Second', 'In Which Little Kindling Has a Very Bad Day');
-  hud.resetRun();
+  hud.setChapter('Chapter the Second', level.heading || `In Which ${level.title} Has a Very Bad Day`);
+  hud.resetRun(level.deeds, level.narration?.ending);
   hud.setMayhemVisible(true);
-  hud.narrate('village', true);
+  if (level.narration?.opening) hud.narrateText(level.narration.opening);
+  else hud.narrate('village', true);
 }
 
 async function buildExtractedForestSector() {
   clearWorld();
   sceneName = 'forestExtract';
-  lighting.village();
+  mood = moodOf(undefined);
+  lighting.village(mood);
   hud.setChapter('An Appendix', 'The Extracted Unreal Forest Sector');
   hud.setMayhemVisible(false);
   hud.setLoading(true, 'Consulting the archives…');
@@ -218,7 +225,8 @@ async function buildExtractedForestSector() {
 function buildDeskPage(level: LevelDefinition) {
   clearWorld();
   sceneName = 'desk';
-  lighting.village();
+  mood = moodOf(level.mood);
+  lighting.village(mood);
   rampage = new Rampage(simWorld, simRng, drakeSim, level, false, true);
   stage.buildVillage(level, rampage.props);
   const start = spawnFor(level, 0);
@@ -244,7 +252,9 @@ function openDesk(level?: LevelDefinition, resume = false) {
       readingDraft = true;
       draftBanner.classList.remove('hidden');
       buildForest(draft);
-      hud.setChapter('Your Draft', draft.title);
+      // The desk's high view is no way to play: back behind the drake.
+      rig.reset(spawnFor(draft, 0).yaw);
+      hud.setChapter(`Your Draft: ${draft.title}`, draft.heading || `In Which ${draft.title} Has a Very Bad Day`);
     },
     close: () => {
       desk!.close();
@@ -435,6 +445,7 @@ function deskFrame(frameDt: number) {
   drake.lookTarget = null;
   drake.update(simWorld.state, frameDt, elapsed);
   const fires = stage.update(frameDt, elapsed, fx);
+  if (mood.snow) fx.snowfall(camera, quality === 'high' ? 26 : 14, frameDt);
   fx.assignLights(fires);
   fx.update(frameDt, camera, elapsed);
   sound.update(0, false);
@@ -501,6 +512,7 @@ app.on('update', (frameDt: number) => {
     if (dwarf.burning && puppet) fires.push({ position: puppet.root.getPosition(), strength: .5 });
   }
   if (breathing) fires.push({ position: mouth.clone(), strength: 1.2 });
+  if (mood.snow && sceneName === 'forest') fx.snowfall(camera, quality === 'high' ? 26 : 14, dt);
   fx.assignLights(fires);
   fx.update(dt, camera, elapsed);
   sound.fires(fires.length);
