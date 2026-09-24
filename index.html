@@ -101,10 +101,17 @@
             <div class="together-row">
               <input id="together-room" maxlength="24" spellcheck="false" aria-label="Room code" />
               <input id="together-name" maxlength="16" spellcheck="false" placeholder="your name" aria-label="Your name" />
+              <input id="together-chapter" maxlength="20" spellcheck="false" placeholder="chapter code" aria-label="Chapter code (optional)" />
               <button type="submit">Join</button>
             </div>
             <div class="together-hint">same room code, same village · up to four drakes</div>
           </form>
+          <form id="read-form" class="read-row" autocomplete="off">
+            <span>or read a bound chapter:</span>
+            <input id="read-code" maxlength="20" spellcheck="false" placeholder="bakery-771" aria-label="Chapter code" />
+            <button type="submit">Read</button>
+          </form>
+          <div id="read-error" class="read-error"></div>
           <a href="#" id="write-chapter" class="write-chapter">or write a chapter of your own ✎</a>
         </div>
       </div>

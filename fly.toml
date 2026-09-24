@@ -12,6 +12,14 @@ primary_region = 'ord'
 [build]
   dockerfile = 'Dockerfile'
 
+# Bound chapters live in SQLite on this volume (server/chapters.ts). One
+# machine, one volume: the store is the only state that outlives a restart.
+# Fly snapshots volumes daily; GET /admin/chapters.jsonl (with ADMIN_TOKEN)
+# is the full export.
+[mounts]
+  source = 'chapters'
+  destination = '/data'
+
 [http_service]
   internal_port = 8080
   force_https = true

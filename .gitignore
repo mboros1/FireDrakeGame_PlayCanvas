@@ -28,3 +28,6 @@ recordings/
 
 # Packaged builds (npm run package:itch). They contain the licensed drake.
 release/
+
+# Local room-server data (bound chapters)
+.data/

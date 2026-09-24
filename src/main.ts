@@ -36,7 +36,8 @@ import { EventPresenter } from './game/presenter';
 import { loadExtractedSector, type ExtractedSector } from './game/extracted';
 import { installDebugApi, type SceneName } from './game/debug';
 import { Desk } from './editor/desk';
-import type { LevelDefinition } from './sim/level';
+import { validateLevel, type LevelDefinition } from './sim/level';
+import { bindChapter, fetchChapter } from './net/chapters';
 import { moodOf, type MoodPalette } from './view/moods';
 
 type SavedState = { scene: SceneName; x: number; z: number; yaw: number };
@@ -187,7 +188,9 @@ function buildForest(draft?: LevelDefinition) {
   sceneName = 'forest';
   telemetry.note({ scene: 'forest', together: party !== null });
   // Together, the room decides the level; alone, it is the default or a draft.
-  const level = party ? getLevel(party.session.level || undefined) : currentLevel;
+  const level = party
+    ? (party.session.chapter ? validateLevel(party.session.chapter) : getLevel(party.session.level || undefined))
+    : currentLevel;
   mood = moodOf(level.mood);
   lighting.village(mood);
   // Together, this is a replica of the server's village: same props from the
@@ -260,7 +263,8 @@ function openDesk(level?: LevelDefinition, resume = false) {
       desk!.close();
       currentLevel = getLevel();
       buildCave();
-    }
+    },
+    bind: draft => bindChapter(SERVER_URL, draft)
   }, app);
   desk.open(level, resume);
 }
@@ -296,7 +300,7 @@ async function transitionToForest() {
 // ── Together ───────────────────────────────────────────────────────────────
 
 /** Join (or open) a room. The cave is skipped: together, you start in the village. */
-function startParty(roomCode: string, name: string) {
+function startParty(roomCode: string, name: string, chapterCode = '') {
   if (party) party.destroy();
   const room = cleanRoom(roomCode);
   try {
@@ -325,17 +329,45 @@ function startParty(roomCode: string, name: string) {
       hud.setLoading(false);
       hud.narrateText(detail);
     }
-  }, SERVER_URL, room, name);
+  }, SERVER_URL, room, name, chapterCode.trim().toLowerCase());
 }
+
+/** Read a bound chapter alone: fetch it, check it, play it. */
+async function readBoundChapter(code: string) {
+  const error = document.querySelector<HTMLDivElement>('#read-error');
+  if (error) error.textContent = '';
+  hud.setLoading(true, 'Fetching the chapter…');
+  const result = await fetchChapter(SERVER_URL, code);
+  if (!result.ok) {
+    hud.setLoading(false);
+    if (error) error.textContent = result.error;
+    return false;
+  }
+  hud.openCover();
+  sound.pageTurn();
+  buildForest(result.level);
+  rig.reset(spawnFor(result.level, 0).yaw);
+  await new Promise(resolve => setTimeout(resolve, 300));
+  hud.setLoading(false);
+  return true;
+}
+
+document.querySelector<HTMLFormElement>('#read-form')?.addEventListener('submit', event => {
+  event.preventDefault();
+  const code = document.querySelector<HTMLInputElement>('#read-code')!.value;
+  (document.activeElement as HTMLElement | null)?.blur();
+  void readBoundChapter(code);
+});
 
 document.querySelector<HTMLFormElement>('#together-form')?.addEventListener('submit', event => {
   event.preventDefault();
   const room = document.querySelector<HTMLInputElement>('#together-room')!.value;
   const name = document.querySelector<HTMLInputElement>('#together-name')!.value.trim();
+  const chapter = document.querySelector<HTMLInputElement>('#together-chapter')!.value;
   (document.activeElement as HTMLElement | null)?.blur();
   hud.openCover();
   sound.pageTurn();
-  startParty(room, name);
+  startParty(room, name, chapter);
 });
 {
   const roomInput = document.querySelector<HTMLInputElement>('#together-room');
@@ -403,7 +435,9 @@ function finishBoot() {
     const room = params.get('room');
     if (room && !party) {
       hud.openCover();
-      startParty(room, params.get('name') ?? '');
+      startParty(room, params.get('name') ?? '', params.get('chapter') ?? '');
+    } else if (params.get('chapter')) {
+      void readBoundChapter(params.get('chapter')!);
     } else if (params.has('desk')) {
       openDesk();
     }

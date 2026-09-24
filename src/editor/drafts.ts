@@ -83,6 +83,28 @@ export const saveDraft = (level: LevelDefinition): boolean => {
   return write(store);
 };
 
+const BINDINGS_KEY = 'fire-drake:chapter-bindings';
+
+/** Codes a draft has been bound as, newest first. Each bind is a new code. */
+export const bindingsFor = (draftId: string): { code: string; at: number }[] => {
+  try {
+    const all = JSON.parse(localStorage.getItem(BINDINGS_KEY) ?? '{}') as Record<string, { code: string; at: number }[]>;
+    return all[draftId] ?? [];
+  } catch {
+    return [];
+  }
+};
+
+export const recordBinding = (draftId: string, code: string) => {
+  try {
+    const all = JSON.parse(localStorage.getItem(BINDINGS_KEY) ?? '{}') as Record<string, { code: string; at: number }[]>;
+    all[draftId] = [{ code, at: Date.now() }, ...(all[draftId] ?? [])].slice(0, 12);
+    localStorage.setItem(BINDINGS_KEY, JSON.stringify(all));
+  } catch {
+    // The code is still shown; it just is not remembered here.
+  }
+};
+
 export const deleteDraft = (id: string) => {
   const store = read();
   store.drafts = store.drafts.filter(d => d.id !== id);

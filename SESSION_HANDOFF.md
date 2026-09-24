@@ -116,8 +116,34 @@ foundation for the level editor and for levels stored on the server.
   `{ template, count, title?, flavour? }` from the templates in
   `DEED_TEMPLATES`. Absent deeds means the usual eleven (`DEFAULT_DEEDS`,
   worded exactly as before).
-- Next: binding chapters to the server with chapter codes, then a table of
-  contents.
+- **Binding:** the desk's "Bind the chapter" sends the draft to the room
+  server, which validates it and stores it immutably under a code like
+  `barley-896` (a word and three digits, random, not sequential). Binding
+  again makes a new code. Readers enter a code on the cover ("or read a
+  bound chapter"), or use `?chapter=CODE`. For multiplayer, the first player
+  to open a room can name a chapter (optional field in "read it together",
+  or `?room=…&chapter=…`); the server sends the chapter file in `welcome`
+  (protocol 3), so everyone plays the same village. An unknown chapter
+  closes with 4004.
+- Next: a table of contents (browse bound chapters), then chaining chapters
+  into books.
+
+## Chapter storage (server)
+
+`server/chapters.ts`: SQLite through Node's built-in `node:sqlite`, at
+`/data/chapters.db` on the Fly volume `chapters` (1 GB, `ord`, mounted by
+`fly.toml`). Everything goes through the `ChapterStore` interface, so Tigris
+could replace it once the account has a card (Tigris is blocked on trial
+accounts; volumes are allowed). API: `POST /chapters` (text/plain JSON body,
+128 KB cap, 12 binds per IP per hour, validated) returns `{ code }`;
+`GET /chapters/:code`; `GET /admin/chapters.jsonl` exports every chapter
+when called with `Authorization: Bearer $ADMIN_TOKEN`, and is disabled until
+you run `fly secrets set ADMIN_TOKEN=…`. IPs are stored only as salted
+hashes. Fly snapshots the volume daily. Verified: a chapter bound on
+production survived a machine restart. Locally the store is
+`.data/chapters.db` (ignored); the tests use `test-results/.chapters.db`.
+The trial's 5-minute machine cap restarts the server but does not touch the
+volume.
 
 The painted ground used to be mirrored front to back (the paths and pond
 were drawn at −z's mirror image); the desk exposed it, and it is fixed.
@@ -277,7 +303,7 @@ and layout constraints.
 npm run iterate    # both typechecks, vite build, playwright
 ```
 
-Last verified 2026-09-23: 62 passed locally (including the desk and chapter details). CI (`.github/workflows/ci.yml`)
+Last verified 2026-09-24: 66 passed locally (including binding and chapter rooms). CI (`.github/workflows/ci.yml`)
 runs the typechecks, both builds and `npm run test:headless` (50 tests
 needing no drake asset) on every push.
 

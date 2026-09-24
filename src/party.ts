@@ -72,8 +72,8 @@ export class Party {
   /** Largest correction applied, for the debug surface. */
   lastCorrection = 0;
 
-  constructor(private readonly deps: PartyDeps, url: string, readonly room: string, name: string) {
-    this.session = new NetSession(url, room, name);
+  constructor(private readonly deps: PartyDeps, url: string, readonly room: string, name: string, chapterCode = '') {
+    this.session = new NetSession(url, room, name, chapterCode);
     this.session.onWelcome = () => {
       this.ready = true;
       deps.rebuild();
@@ -90,7 +90,8 @@ export class Party {
         closed: 'The connection to the story was lost. Refresh to rejoin.',
         full: `Room ${room} is full: four drakes is the limit.`,
         outdated: 'A newer edition of this book is out. Refresh the page to read it.',
-        busy: 'The storyteller is overwhelmed. Try again in a moment.'
+        busy: 'The storyteller is overwhelmed. Try again in a moment.',
+        'no-chapter': 'No chapter is bound by that code. Check it, or leave it blank for Little Kindling.'
       }[status];
       deps.status(status, detail);
       this.renderRoster(this.session.roster);

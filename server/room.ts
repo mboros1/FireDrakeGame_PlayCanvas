@@ -14,7 +14,7 @@ import { World } from '../src/sim/world';
 import { Rng } from '../src/sim/random';
 import { DrakeSim } from '../src/sim/drake';
 import { Rampage, type RampageEvent } from '../src/sim/rampage';
-import { spawnFor, type LevelDefinition } from '../src/sim/level';
+import { spawnFor, toLevelFile, type LevelDefinition, type LevelFile } from '../src/sim/level';
 import { getLevel } from '../src/sim/levels';
 import { NO_INPUT, type Input, type Transform } from '../src/sim/types';
 import {
@@ -83,10 +83,22 @@ export class Room {
   private owed = 0;
   private lastTimer = 0;
 
-  constructor(readonly name: string, private readonly onEmpty: (room: Room) => void) {
+  /** The chapter file, sent to every joiner, when this room plays a bound chapter. */
+  private readonly chapter: LevelFile | undefined;
+
+  constructor(readonly name: string, private readonly onEmpty: (room: Room) => void, chapter?: LevelDefinition) {
     this.seed = hashRoom(name);
     this.rng = new Rng(this.seed);
+    if (chapter) {
+      this.layout = chapter;
+      this.chapter = toLevelFile(chapter);
+    }
     this.rampage = new Rampage(this.world, this.rng, null, this.layout, true);
+  }
+
+  /** The level this room plays, for joiners asking for a different one. */
+  get levelId() {
+    return this.layout.id;
   }
 
   get size() {
@@ -104,7 +116,7 @@ export class Room {
     const name = (requestedName || '').replace(/[^\p{L}\p{N} _-]/gu, '').slice(0, 16) || `Drake ${seat + 1}`;
     const drake = this.spawnDrake(seat);
     this.players.set(socket, { socket, seat, name, drake, input: { ...NO_INPUT }, lastSeen: Date.now(), inputBudget: MAX_INPUTS_PER_SECOND, ack: -1, queue: [] });
-    send(socket, { t: 'welcome', v: PROTOCOL_VERSION, player: seat, colour: seat, room: this.name, seed: this.seed, tickHz: SERVER_TICK_HZ, level: this.layout.id });
+    send(socket, { t: 'welcome', v: PROTOCOL_VERSION, player: seat, colour: seat, room: this.name, seed: this.seed, tickHz: SERVER_TICK_HZ, level: this.layout.id, chapter: this.chapter });
     this.broadcastRoster();
     if (!this.timer) {
       this.lastTimer = performance.now();
@@ -163,7 +175,8 @@ export class Room {
   private restart() {
     this.world = new World();
     this.rng = new Rng(this.seed);
-    this.layout = getLevel(this.layout.id);
+    // A bound chapter's level is already this.layout; a built-in reloads.
+    if (!this.chapter) this.layout = getLevel(this.layout.id);
     this.rampage = new Rampage(this.world, this.rng, null, this.layout, true);
     for (const player of this.players.values()) {
       player.drake = this.spawnDrake(player.seat);
@@ -171,7 +184,7 @@ export class Room {
     }
     this.pending = [];
     this.tick = 0;
-    this.broadcast({ t: 'restart', seed: this.seed, level: this.layout.id });
+    this.broadcast({ t: 'restart', seed: this.seed, level: this.layout.id, chapter: this.chapter });
   }
 
   /**

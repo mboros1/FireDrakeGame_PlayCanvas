@@ -21,7 +21,7 @@ import { canvasTexture, centredQuadMesh, meshEntity, paintMaterial, quadMesh } f
 import type { CameraRig } from '../game/camera';
 import type { Controls } from '../game/input';
 import { TUNING } from '../tuning';
-import { blankChapter, chapterJson, copyOfChapter, listDrafts, loadDraft, parseChapter, saveDraft } from './drafts';
+import { bindingsFor, blankChapter, chapterJson, copyOfChapter, listDrafts, loadDraft, parseChapter, recordBinding, saveDraft } from './drafts';
 
 export type DeskTool = 'select' | 'place' | 'path' | 'pond' | 'bookmark' | 'erase';
 
@@ -37,6 +37,8 @@ export type DeskHost = {
   read: (level: LevelDefinition) => void;
   /** Leave the desk. */
   close: () => void;
+  /** Bind the draft on the server; resolves with its code or the binder's complaint. */
+  bind: (level: LevelDefinition) => Promise<{ ok: true; code: string } | { ok: false; error: string; problems?: string[] }>;
 };
 
 const KIND_ORDER: [PropKind, string][] = [
@@ -129,6 +131,7 @@ export class Desk {
           <button data-action="undo" title="⌘Z">Undo</button>
           <button data-action="redo" title="⇧⌘Z">Redo</button>
           <button data-action="details">Chapter details</button>
+          <button data-action="bind">Bind the chapter</button>
           <button data-action="read" class="desk-read">Read this page ▸</button>
           <button data-action="close">Close the desk</button>
         </div>
@@ -159,6 +162,7 @@ export class Desk {
         </div>
       </section>
       <aside class="desk-inspector hidden" id="desk-inspector"></aside>
+      <section class="desk-bound hidden" id="desk-bound"></section>
       <div class="desk-status" id="desk-status"></div>
       <nav class="desk-tray" id="desk-tray">
         <button data-tool="select" data-key="1">Select</button>
@@ -279,7 +283,8 @@ export class Desk {
       problems: this.problems.slice(),
       undo: this.undoStack.length,
       redo: this.redoStack.length,
-      saved: this.saved
+      saved: this.saved,
+      boundCode: this.boundCode
     };
   }
 
@@ -638,6 +643,7 @@ export class Desk {
         case 'undo': this.undo(); break;
         case 'redo': this.redo(); break;
         case 'read': this.readPage(); break;
+        case 'bind': void this.bindPage(); break;
         case 'details':
           this.root.querySelector('#desk-details')!.classList.toggle('hidden');
           this.renderDetails();
@@ -690,6 +696,43 @@ export class Desk {
     this.host.read(this.level);
   }
 
+  /** Send the draft to the binder and show its code as a bookplate. */
+  async bindPage() {
+    const card = this.root.querySelector<HTMLElement>('#desk-bound')!;
+    if (this.problems.length > 0) {
+      this.flashNotes(['The chapter cannot be bound until the margin notes are settled.']);
+      return;
+    }
+    const button = this.root.querySelector<HTMLButtonElement>('[data-action="bind"]')!;
+    button.disabled = true;
+    button.textContent = 'Binding…';
+    const result = await this.host.bind(this.level);
+    button.disabled = false;
+    button.textContent = 'Bind the chapter';
+    card.classList.remove('hidden');
+    if (!result.ok) {
+      card.innerHTML = `<div class="bound-title">The binder refused</div><p>${escapeHtml(result.error)}</p>` +
+        (result.problems?.length ? `<ul>${result.problems.slice(0, 6).map(p => `<li>${escapeHtml(p)}</li>`).join('')}</ul>` : '') +
+        '<button data-bound="close">Close</button>';
+    } else {
+      recordBinding(this.level.id, result.code);
+      this.boundCode = result.code;
+      card.innerHTML = `<div class="bound-title">Bound, and on the shelf</div>
+        <div class="bound-code" id="bound-code">${escapeHtml(result.code)}</div>
+        <p>Anyone can read it from the cover with this code, or play it together by adding the code when joining a room. Binding again makes a new code; this one never changes.</p>
+        <button data-bound="copy">Copy the code</button> <button data-bound="close">Close</button>`;
+    }
+    card.onclick = event => {
+      const action = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-bound]')?.dataset.bound;
+      if (action === 'close') card.classList.add('hidden');
+      if (action === 'copy' && result.ok) void navigator.clipboard?.writeText(result.code).catch(() => {});
+    };
+    this.renderUi();
+  }
+
+  /** Last code this draft was bound as in this session, for tests and notes. */
+  boundCode: string | null = null;
+
   private download() {
     const blob = new Blob([this.exportText()], { type: 'application/json' });
     const link = document.createElement('a');
@@ -728,6 +771,8 @@ export class Desk {
       if (this.level.props.length === 0) tips.push('An empty page. Pick a cutout from the tray and click to place it.');
       else if (cottages === 0) tips.push('No cottages yet: dwarves live in cottages, so nobody will come out to play.');
       if (!this.saved) tips.push('This browser would not keep the draft. Export it to be safe.');
+      const bound = bindingsFor(this.level.id);
+      if (bound.length > 0) tips.push(`Bound as ${bound.slice(0, 3).map(b => b.code).join(', ')}. Edits since then are not in those copies.`);
     }
     tips.push(TOOL_TIPS[this.tool]);
     this.notes.innerHTML = tips.map((t, i) => `<p class="desk-note${i < this.problems.length ? ' urgent' : ''}">${escapeHtml(t)}</p>`).join('');

@@ -17,8 +17,10 @@
  * server from Node.
  */
 
+import type { LevelFile } from '../sim/level';
 import {
   CLOSE_BUSY,
+  CLOSE_NO_CHAPTER,
   CLOSE_FULL,
   CLOSE_OUTDATED,
   encodeInput,
@@ -39,7 +41,7 @@ const HISTORY = 128;
  * `reconnecting` is transient: the session retries on its own. `closed`,
  * `full`, `outdated` and `busy` are final until the player acts.
  */
-export type NetStatus = 'connecting' | 'open' | 'reconnecting' | 'closed' | 'full' | 'outdated' | 'busy';
+export type NetStatus = 'connecting' | 'open' | 'reconnecting' | 'closed' | 'full' | 'outdated' | 'busy' | 'no-chapter';
 
 /** Retry delays after an unexpected drop; then give up and say so. */
 const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000, 15000];
@@ -55,6 +57,8 @@ export class NetSession {
   room = '';
   /** The level the room is playing, from the server. */
   level = '';
+  /** The room's chapter, when it plays a bound one rather than a built-in. */
+  chapter: LevelFile | null = null;
   roster: PlayerInfo[] = [];
   latencyMs = 0;
 
@@ -76,9 +80,10 @@ export class NetSession {
   private readonly history = new Map<number, { x: number; z: number; yaw: number }>();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(url: string, room: string, private readonly name: string) {
+  constructor(url: string, room: string, private readonly name: string, chapterCode = '') {
     this.url = new URL(url);
     this.url.searchParams.set('room', room);
+    if (chapterCode) this.url.searchParams.set('chapter', chapterCode);
     this.url.searchParams.set('name', name);
     this.url.searchParams.set('v', String(PROTOCOL_VERSION));
     this.connect();
@@ -105,6 +110,7 @@ export class NetSession {
       if (event.code === CLOSE_FULL || this.status === 'full') return this.setStatus('full');
       if (event.code === CLOSE_OUTDATED) return this.setStatus('outdated');
       if (event.code === CLOSE_BUSY) return this.setStatus('busy');
+      if (event.code === CLOSE_NO_CHAPTER) return this.setStatus('no-chapter');
       // Anything else (a network change, a redeploy, a sleeping phone) is
       // worth retrying. The room keeps running for whoever stayed.
       const delay = RECONNECT_DELAYS_MS[this.attempt];
@@ -235,6 +241,7 @@ export class NetSession {
         this.player = message.player;
         this.room = message.room;
         this.level = message.level;
+        this.chapter = message.chapter ?? null;
         this.onWelcome();
         break;
       case 'roster':
@@ -248,6 +255,7 @@ export class NetSession {
         this.buffer.length = 0;
         this.history.clear();
         this.level = message.level;
+        this.chapter = message.chapter ?? null;
         this.onRestart();
         break;
       case 'pong':

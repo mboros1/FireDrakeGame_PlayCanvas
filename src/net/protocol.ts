@@ -13,19 +13,22 @@
 
 import type { RampageEvent } from '../sim/rampage';
 import type { Input } from '../sim/types';
+import type { LevelFile } from '../sim/level';
 
 /**
  * Bump when a message shape changes incompatibly. Clients send it when they
  * connect; a mismatch is refused with {@link CLOSE_OUTDATED} so a stale cached
  * page says "refresh" instead of misreading snapshots.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** WebSocket close codes the server uses, so the client can explain. */
 export const CLOSE_IDLE = 4000;
 export const CLOSE_FULL = 4001;
 export const CLOSE_OUTDATED = 4002;
 export const CLOSE_BUSY = 4003;
+/** The chapter a new room was asked to play is not bound. */
+export const CLOSE_NO_CHAPTER = 4004;
 
 /** Server simulation rate. Clients render faster and interpolate. */
 export const SERVER_TICK_HZ = 30;
@@ -100,10 +103,11 @@ export type Snapshot = {
 export type PlayerInfo = { player: number; name: string; colour: number };
 
 export type ServerMessage =
-  | { t: 'welcome'; v: number; player: number; colour: number; room: string; seed: number; tickHz: number; level: string }
+  /** `chapter` is the level itself when the room plays a bound chapter rather than a built-in one. */
+  | { t: 'welcome'; v: number; player: number; colour: number; room: string; seed: number; tickHz: number; level: string; chapter?: LevelFile }
   | { t: 'roster'; players: PlayerInfo[] }
   | { t: 'full' }
-  | { t: 'restart'; seed: number; level: string }
+  | { t: 'restart'; seed: number; level: string; chapter?: LevelFile }
   | { t: 'pong'; at: number }
   | Snapshot;
 
