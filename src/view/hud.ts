@@ -127,9 +127,9 @@ export class Hud {
   private idle = 0;
 
   constructor() {
-    // The "play together" form lives on the cover; using it must not open the book.
+    // The cover's forms, and the table of contents over it, must not open the book.
     const dismiss = (event: Event) => {
-      if ((event.target as HTMLElement | null)?.closest?.('.cover-together')) return;
+      if ((event.target as HTMLElement | null)?.closest?.('.cover-together, #contents')) return;
       this.openCover();
     };
     window.addEventListener('keydown', dismiss);

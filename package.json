@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json && tsc --noEmit -p server/tsconfig.json && vite build",
+    "build": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test:browser": "playwright test",
     "test:browser:headed": "playwright test --headed",
@@ -14,21 +14,18 @@
     "iterate": "npm run build && npm run test:browser",
     "record": "node scripts/record-gameplay.mjs",
     "package:itch": "node scripts/package-itch.mjs",
-    "server:build": "tsc --noEmit -p server/tsconfig.json && vite build --config server/vite.config.ts",
-    "server:dev": "npm run server:build && PORT=8787 node --disable-warning=ExperimentalWarning dist-server/index.js",
     "publish:itch": "npm run package:itch && butler push release/fire-drake-itch.zip thedudemanguyfriend/firedrake:html5 --userversion \"$(git describe --always --dirty)\"",
     "levels:export": "vite build --ssr scripts/export-levels.ts --outDir .levels-tmp --emptyOutDir && node .levels-tmp/export-levels.js && rm -rf .levels-tmp",
-    "test:headless": "playwright test tests/sim-drake.spec.ts tests/sim-dwarf.spec.ts tests/sim-world.spec.ts tests/sim-rampage.spec.ts tests/level.spec.ts tests/model-data.spec.ts tests/report.spec.ts"
+    "test:headless": "playwright test tests/sim-drake.spec.ts tests/sim-dwarf.spec.ts tests/sim-world.spec.ts tests/sim-rampage.spec.ts tests/level.spec.ts tests/model-data.spec.ts tests/lobby.spec.ts tests/chapter-code.spec.ts"
   },
   "dependencies": {
     "playcanvas": "2.21.0",
-    "ws": "^8.21.3"
+    "trystero": "0.25.4"
   },
   "devDependencies": {
     "@playwright/mcp": "0.0.78",
     "@playwright/test": "1.61.1",
     "@types/node": "^26.1.1",
-    "@types/ws": "^8.18.1",
     "typescript": "7.0.2",
     "vite": "8.1.5"
   }

@@ -21,6 +21,8 @@ import { canvasTexture, centredQuadMesh, meshEntity, paintMaterial, quadMesh } f
 import type { CameraRig } from '../game/camera';
 import type { Controls } from '../game/input';
 import { TUNING } from '../tuning';
+import { chapterLink, nickname } from '../chapters/code';
+import { framed } from '../view/contents';
 import { bindingsFor, blankChapter, chapterJson, copyOfChapter, listDrafts, loadDraft, parseChapter, recordBinding, saveDraft } from './drafts';
 
 export type DeskTool = 'select' | 'place' | 'path' | 'pond' | 'bookmark' | 'erase';
@@ -37,8 +39,8 @@ export type DeskHost = {
   read: (level: LevelDefinition) => void;
   /** Leave the desk. */
   close: () => void;
-  /** Bind the draft on the server; resolves with its code or the binder's complaint. */
-  bind: (level: LevelDefinition) => Promise<{ ok: true; code: string } | { ok: false; error: string; problems?: string[] }>;
+  /** Bind the draft into a chapter code and shelve it; resolves with the code, or the binder's complaint. */
+  bind: (level: LevelDefinition) => Promise<{ ok: true; code: string; id: string } | { ok: false; error: string; problems?: string[] }>;
 };
 
 const KIND_ORDER: [PropKind, string][] = [
@@ -696,7 +698,7 @@ export class Desk {
     this.host.read(this.level);
   }
 
-  /** Send the draft to the binder and show its code as a bookplate. */
+  /** Bind the draft into a chapter code and show it as a bookplate. */
   async bindPage() {
     const card = this.root.querySelector<HTMLElement>('#desk-bound')!;
     if (this.problems.length > 0) {
@@ -715,17 +717,25 @@ export class Desk {
         (result.problems?.length ? `<ul>${result.problems.slice(0, 6).map(p => `<li>${escapeHtml(p)}</li>`).join('')}</ul>` : '') +
         '<button data-bound="close">Close</button>';
     } else {
-      recordBinding(this.level.id, result.code);
+      const name = nickname(result.id);
+      recordBinding(this.level.id, name);
       this.boundCode = result.code;
-      card.innerHTML = `<div class="bound-title">Bound, and on the shelf</div>
-        <div class="bound-code" id="bound-code">${escapeHtml(result.code)}</div>
-        <p>Anyone can read it from the cover with this code, or play it together by adding the code when joining a room. Binding again makes a new code; this one never changes.</p>
-        <button data-bound="copy">Copy the code</button> <button data-bound="close">Close</button>`;
+      card.innerHTML = `<div class="bound-title">Bound, and on your shelf</div>
+        <div class="bound-name" id="bound-name">${escapeHtml(name)}</div>
+        <textarea class="bound-code-text" id="bound-code" readonly spellcheck="false">${escapeHtml(result.code)}</textarea>
+        <p>This code is the whole chapter. Send it to anyone: they paste it on the cover to read it, or into "read it together" to play it in a room. Change the draft and bind again for a new code; this one never changes.</p>
+        <button data-bound="copy">Copy the code</button>${framed() ? '' : ' <button data-bound="link">Copy a link</button>'} <button data-bound="close">Close</button>`;
+      card.querySelector<HTMLTextAreaElement>('#bound-code')?.addEventListener('focus', event => (event.target as HTMLTextAreaElement).select());
     }
     card.onclick = event => {
-      const action = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-bound]')?.dataset.bound;
+      const target = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-bound]');
+      const action = target?.dataset.bound;
       if (action === 'close') card.classList.add('hidden');
-      if (action === 'copy' && result.ok) void navigator.clipboard?.writeText(result.code).catch(() => {});
+      if ((action === 'copy' || action === 'link') && result.ok) {
+        void navigator.clipboard?.writeText(action === 'copy' ? result.code : chapterLink(result.code)).then(() => {
+          target!.textContent = 'Copied';
+        }).catch(() => {});
+      }
     };
     this.renderUi();
   }

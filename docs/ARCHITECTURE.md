@@ -55,28 +55,55 @@ contact resolution, and no terrain. See
 `forge/docs/designs/in_progress/10_CONTACTS_AND_COLLIDERS.md` for the roadmap
 and `11_BROWSER_TARGET.md` for the wasm32 work.
 
-### The server is a native remote binary
+### Rooms are player-hosted, with no server of ours
 
-A dedicated Rust server process, running remotely, authoritative over
-simulation. Not WASM, not peer-hosted.
+**Changed 2026-09-24.** This decision previously read *"a dedicated Rust
+server process, running remotely, authoritative over simulation. Not WASM,
+not peer-hosted."* It was reversed so that the game is self-contained: no
+machine to run, pay for, restart or back up, and nothing that stops working
+when a hosting account lapses.
 
-Player-hosted sessions (the Warframe model) were considered seriously. They fit
-the genre — co-op chaos has no competitive integrity requirement — and WASM
-threads mean a browser host is not compute-limited. They were rejected on
-residential upload bandwidth, host hardware variance, background-tab throttling,
-and host migration, which remains the most-complained-about part of Warframe
-after a decade of work by a much larger team.
+What replaced it:
 
-forge's own `08_DISTRIBUTED_WORLD.md` reaches the same v1 conclusion
-independently: *"each region is owned by exactly one server process at any
-moment."*
+- **One player's browser hosts each room.** It runs the same authoritative
+  `Room` (`src/net/room.ts`) the Fly server used to run, and plays in it over
+  a loopback, so the host runs the ordinary client too. Everyone else
+  predicts and reconciles against the host exactly as they did against the
+  server. The message contract (inputs in, snapshots out) is unchanged.
+- **Peers find each other over public Nostr relays** (Trystero), which carry
+  only the WebRTC handshake. Game traffic is browser to browser. STUN is
+  public; there is **no TURN relay**, so a minority of strict networks
+  (symmetric NAT, some corporate and mobile carriers) cannot connect.
+- **Election is local and deterministic** (`src/net/lobby.ts`): arrive,
+  listen for a host, host if nobody answers; of two hosts, the one with
+  guests wins, then the lower peer id. When the host leaves, the lowest
+  remaining id hosts a **fresh page** of the same chapter. State is not
+  migrated: the village restarts.
+- **Chapters carry themselves** (`src/chapters/code.ts`): a bound chapter's
+  code is the level, deflated and base64url'd (~3.4 KB for a full village).
+  The table of contents is this browser's shelf, not a public index.
 
-This is revisitable. Because the simulation is one Rust crate compiled to both
-native and wasm32, "who hosts a session" is a deployment decision, not an
-architectural one. Opt-in peer-hosted private games can be added later without a
-second implementation.
+The objections from the original decision all still hold, and are accepted
+rather than solved: the host's upload carries every guest (~12 KB/s each,
+fine at four players); host hardware varies; background tabs throttle
+timers (mitigated: the room's clock runs in a worker, which is not
+throttled; the host's own drake still idles out if its tab stays hidden);
+and host migration costs the room its village. The host is trusted by its
+guests; for a co-op chaos sandbox with no ladder or economy that is
+acceptable, and inputs from guests are still validated and rate-limited by
+the host exactly as the server did.
+
+This stays revisitable in both directions. The `Mesh` interface is the seam:
+a dedicated authoritative server, or a TURN relay for the networks that
+cannot connect, slots in without touching the room or the client. forge's
+`08_DISTRIBUTED_WORLD.md` reasoning about one owner per region is satisfied
+by one host per room.
 
 ### Transport is WebTransport
+
+**Superseded for now (2026-09-24):** rooms are player-hosted over WebRTC data
+channels, which are what browsers can open to each other. The reasoning
+below applies if a dedicated server returns.
 
 WebTransport reached Baseline in March 2026 when Safari 26.4 shipped it, so it
 now works in every current browser without a polyfill. It provides unreliable,
@@ -87,6 +114,9 @@ The earlier plan of "start on WebSocket, migrate later" is unnecessary. Server
 side: `wtransport`.
 
 ### Discovery splits by rate of change
+
+**Partly superseded (2026-09-24):** there are no game servers to list. Rooms
+are found by code, with the Nostr relays carrying only the WebRTC handshake.
 
 - **Game server directory → the void board.** Servers are few, long-lived, and
   slow-changing. A server publishing its region, capacity, and address on a
@@ -216,6 +246,10 @@ discovering it when the column layout looks strange.
 
 One simulation crate. Two compilation targets. PlayCanvas never owns gameplay
 state.
+
+Since 2026-09-24 the lower box is the **host player's browser**, not a
+server, and the link is a WebRTC data channel rather than WebTransport. See
+*Rooms are player-hosted*.
 
 ## Simulation
 
@@ -716,8 +750,9 @@ Playable at every step.
    Tracked in forge doc 10.
 3. **forge to wasm32.** `WorkerPool` platform seam, then swap TS movement for
    forge calls. Still single-player. The existing test suite is the gate.
-4. **Server.** Same crate, native, authoritative, one room, WebTransport,
-   prediction and reconciliation.
+4. **Hosting.** Same crate in the host's browser (wasm32), authoritative for
+   its room, prediction and reconciliation; see *Rooms are player-hosted*.
+   (Originally: native, a dedicated server, WebTransport.)
 5. **Gameplay.** Flight, ragdoll dwarves, knockable props, multiplayer.
 
 Step 2 is the long pole and the accepted cost of choosing forge.

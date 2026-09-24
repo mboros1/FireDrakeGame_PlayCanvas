@@ -26,7 +26,6 @@ import { Hud } from './view/hud';
 import { Sound } from './view/audio';
 import { isTouchDevice, TouchControls } from './view/touch';
 import { Party } from './party';
-import { startTelemetry } from './telemetry';
 import { randomRoomCode } from './net/client';
 import { cleanRoom } from './net/protocol';
 import { CameraRig } from './game/camera';
@@ -37,7 +36,11 @@ import { loadExtractedSector, type ExtractedSector } from './game/extracted';
 import { installDebugApi, type SceneName } from './game/debug';
 import { Desk } from './editor/desk';
 import { validateLevel, type LevelDefinition } from './sim/level';
-import { bindChapter, fetchChapter } from './net/chapters';
+import { decodeChapter, encodeChapter } from './chapters/code';
+import { shelve } from './chapters/shelf';
+import { Contents } from './view/contents';
+import { localMesh, nostrMesh } from './net/mesh';
+import { toLevelFile } from './sim/level';
 import { moodOf, type MoodPalette } from './view/moods';
 
 type SavedState = { scene: SceneName; x: number; z: number; yaw: number };
@@ -51,9 +54,10 @@ const stamp = document.querySelector('#cover-version');
 if (stamp) stamp.textContent = `build ${__BUILD_VERSION__}${touch ? ' · touch' : ''}`;
 // Automated runs and phones get the cheap pipeline: same game, fewer passes.
 const quality = (params.get('quality') ?? (navigator.webdriver || touch ? 'low' : 'high')) as 'high' | 'low';
-const SERVER_URL = params.get('server') ?? 'wss://firedrakegame-playcanvas.fly.dev/ws';
-const telemetry = startTelemetry(SERVER_URL, __BUILD_VERSION__, params);
-telemetry.note({ quality, touch });
+// Rooms find each other over public Nostr relays; `?signal=local` keeps them
+// to tabs of this browser (tests and development: no network needed).
+const LOCAL_SIGNAL = params.get('signal') === 'local';
+const MESH = LOCAL_SIGNAL ? { mesh: localMesh, seekMs: 900 } : { mesh: nostrMesh, seekMs: 5000 };
 
 const previous = import.meta.hot?.data.state as SavedState | undefined;
 const app = new pc.Application(canvas, { graphicsDeviceOptions: { antialias: false, alpha: false } });
@@ -130,7 +134,7 @@ const toggleMute = () => {
 function restartChapter() {
   if (sceneName !== 'forest' || transitioning) return;
   sound.pageTurn();
-  // Together, the room restarts for everyone; the server says when.
+  // Together, the room restarts for everyone; its host says when.
   if (party) party.session.requestRestart();
   else buildForest();
 }
@@ -144,7 +148,6 @@ const controls = new Controls(canvas, rig, { KeyM: toggleMute, KeyR: restartChap
  */
 function enableTouch() {
   if (controls.touch) return;
-  telemetry.note({ touch: true, touchLate: !touch });
   controls.touch = new TouchControls(() => hud.openCover(), { mute: toggleMute, restart: restartChapter });
   // A phone discovered late still gets the phone pipeline.
   if (!params.get('quality')) {
@@ -186,14 +189,13 @@ function buildForest(draft?: LevelDefinition) {
   if (draft) currentLevel = draft;
   clearWorld();
   sceneName = 'forest';
-  telemetry.note({ scene: 'forest', together: party !== null });
   // Together, the room decides the level; alone, it is the default or a draft.
   const level = party
     ? (party.session.chapter ? validateLevel(party.session.chapter) : getLevel(party.session.level || undefined))
     : currentLevel;
   mood = moodOf(level.mood);
   lighting.village(mood);
-  // Together, this is a replica of the server's village: same props from the
+  // Together, this is a replica of the host's village: same props from the
   // same level, dwarves by snapshot, the local drake predicted.
   rampage = new Rampage(simWorld, simRng, drakeSim, level, true, party !== null);
   stage.buildVillage(level, rampage.props);
@@ -264,7 +266,13 @@ function openDesk(level?: LevelDefinition, resume = false) {
       currentLevel = getLevel();
       buildCave();
     },
-    bind: draft => bindChapter(SERVER_URL, draft)
+    bind: async draft => {
+      const code = await encodeChapter(draft);
+      const decoded = await decodeChapter(code);
+      if (!decoded.ok) return { ok: false, error: decoded.error };
+      const entry = shelve(decoded.level, code, 'bound');
+      return { ok: true, code, id: entry.id };
+    }
   }, app);
   desk.open(level, resume);
 }
@@ -299,15 +307,33 @@ async function transitionToForest() {
 
 // ── Together ───────────────────────────────────────────────────────────────
 
-/** Join (or open) a room. The cave is skipped: together, you start in the village. */
-function startParty(roomCode: string, name: string, chapterCode = '') {
+/**
+ * Join (or open) a room. The cave is skipped: together, you start in the
+ * village. `chapterText` is an optional chapter code, played if this player
+ * turns out to be the one opening the room; otherwise the room's own chapter
+ * wins, as it always has.
+ */
+async function startParty(roomCode: string, name: string, chapterText = '') {
   if (party) party.destroy();
+  party = null;
   const room = cleanRoom(roomCode);
+  let chapter: LevelDefinition | undefined;
+  if (chapterText.trim()) {
+    const decoded = await decodeChapter(chapterText);
+    if (!decoded.ok) {
+      showCoverError('#together-error', decoded.error);
+      return false;
+    }
+    chapter = decoded.level;
+    shelve(decoded.level, decoded.code, 'read');
+  }
   try {
     localStorage.setItem('fire-drake:name', name);
   } catch {
     // Private mode: the name just is not remembered.
   }
+  hud.openCover();
+  sound.pageTurn();
   hud.setLoading(true, `Room ${room}`);
   party = new Party({
     app,
@@ -321,36 +347,61 @@ function startParty(roomCode: string, name: string, chapterCode = '') {
     rebuild: () => {
       buildForest();
       hud.setLoading(false);
-      hud.setChapter('Chapter the Second, Together', 'In Which Little Kindling Has Several Very Bad Days');
+      const level = party?.session.chapter;
+      hud.setChapter('Chapter the Second, Together', level?.heading || `In Which ${level?.title ?? 'Little Kindling'} Has Several Very Bad Days`);
     },
     events: incoming => events.push(...incoming),
     status: (status, detail) => {
-      if (status === 'open' || status === 'connecting') return;
-      hud.setLoading(false);
+      if (status === 'connecting') return;
+      if (status !== 'open') hud.setLoading(false);
       hud.narrateText(detail);
     }
-  }, SERVER_URL, room, name, chapterCode.trim().toLowerCase());
+  }, room, name, { ...MESH, chapter: chapter ? toLevelFile(chapter) : undefined });
+  return true;
 }
 
-/** Read a bound chapter alone: fetch it, check it, play it. */
-async function readBoundChapter(code: string) {
-  const error = document.querySelector<HTMLDivElement>('#read-error');
-  if (error) error.textContent = '';
-  hud.setLoading(true, 'Fetching the chapter…');
-  const result = await fetchChapter(SERVER_URL, code);
+function showCoverError(selector: string, text: string) {
+  const error = document.querySelector<HTMLDivElement>(selector);
+  if (error) error.textContent = text;
+}
+
+/** Read a bound chapter alone: unpack its code, check it, shelve it, play it. */
+async function readBoundChapter(text: string) {
+  showCoverError('#read-error', '');
+  const result = await decodeChapter(text);
   if (!result.ok) {
-    hud.setLoading(false);
-    if (error) error.textContent = result.error;
+    showCoverError('#read-error', result.error);
+    contents.showError(result.error);
     return false;
   }
+  shelve(result.level, result.code, 'read');
+  contents.close();
   hud.openCover();
   sound.pageTurn();
+  hud.setLoading(true, result.level.title);
   buildForest(result.level);
   rig.reset(spawnFor(result.level, 0).yaw);
   await new Promise(resolve => setTimeout(resolve, 300));
   hud.setLoading(false);
   return true;
 }
+
+/** The table of contents: built-in chapters and everything on this reader's shelf. */
+const contents = new Contents({
+  read: code => void readBoundChapter(code),
+  readBuiltIn: () => {
+    contents.close();
+    currentLevel = getLevel();
+    hud.openCover();
+    void transitionToForest();
+  },
+  together: code => {
+    contents.close();
+    const room = document.querySelector<HTMLInputElement>('#together-room')!.value || randomRoomCode();
+    const name = document.querySelector<HTMLInputElement>('#together-name')!.value.trim();
+    void startParty(room, name, code);
+  }
+});
 
 document.querySelector<HTMLFormElement>('#read-form')?.addEventListener('submit', event => {
   event.preventDefault();
@@ -365,9 +416,8 @@ document.querySelector<HTMLFormElement>('#together-form')?.addEventListener('sub
   const name = document.querySelector<HTMLInputElement>('#together-name')!.value.trim();
   const chapter = document.querySelector<HTMLInputElement>('#together-chapter')!.value;
   (document.activeElement as HTMLElement | null)?.blur();
-  hud.openCover();
-  sound.pageTurn();
-  startParty(room, name, chapter);
+  showCoverError('#together-error', '');
+  void startParty(room, name, chapter);
 });
 {
   const roomInput = document.querySelector<HTMLInputElement>('#together-room');
@@ -413,6 +463,10 @@ document.querySelector('#write-chapter')?.addEventListener('click', event => {
   event.preventDefault();
   openDesk();
 });
+document.querySelector('#open-contents')?.addEventListener('click', event => {
+  event.preventDefault();
+  contents.open();
+});
 
 /**
  * Lift the inline boot screen once the drake is in and the book's fonts have
@@ -434,10 +488,11 @@ function finishBoot() {
     // A direct link to a room skips the cover and joins; ?desk opens the desk.
     const room = params.get('room');
     if (room && !party) {
-      hud.openCover();
-      startParty(room, params.get('name') ?? '', params.get('chapter') ?? '');
+      void startParty(room, params.get('name') ?? '', params.get('chapter') ?? '');
     } else if (params.get('chapter')) {
       void readBoundChapter(params.get('chapter')!);
+    } else if (params.has('contents')) {
+      contents.open();
     } else if (params.has('desk')) {
       openDesk();
     }
@@ -485,7 +540,6 @@ function deskFrame(frameDt: number) {
   sound.update(0, false);
   rig.update(frameDt, elapsed, desk!.focus, rig.yaw, false);
   post.focusAt(camera.getPosition().distance(desk!.focus));
-  telemetry.frame(frameDt);
 }
 
 app.on('update', (frameDt: number) => {
@@ -559,7 +613,6 @@ app.on('update', (frameDt: number) => {
   if (sceneName === 'cave' && drakePosition.z < -38 && !party) void transitionToForest();
   if (sceneName === 'forest' && rampage.score >= 2100 && !hud.hasEnded) hud.showTheEnd(rampage.score);
 
-  telemetry.frame(frameDt);
   hud.update(frameDt, camera.camera!, rampage.score, rampage.combo, controls.active);
   hud.setStats(sceneName === 'forest'
     ? `${rampage.livingDwarves} dwarves · ${rampage.burningDwarves} alight · best chain ×${rampage.bestCombo}`

@@ -1,8 +1,9 @@
 # Typecheck, build and test on every push and pull request.
 #
 # The browser tests need the drake model, a licensed Fab asset that is never
-# committed, so CI runs the rest: simulation, levels, the room server's
-# report endpoint, and the model-data check (which skips without the asset).
+# committed, so CI runs the rest: simulation, levels, chapter codes, the
+# player-hosted room lobby, and the model-data check (which skips without
+# the asset).
 # Run the full suite locally with `npm run iterate`.
 
 name: ci
@@ -26,7 +27,5 @@ jobs:
       - run: npm ci
       - name: Typecheck and build client
         run: npm run build
-      - name: Build room server
-        run: npm run server:build
       - name: Headless tests
         run: npm run test:headless

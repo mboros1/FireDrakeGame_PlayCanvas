@@ -3,9 +3,10 @@
  *
  * Owns everything that differs from single player:
  *
- * - **The local drake is predicted** in fixed steps at the server's tick rate,
- *   with the same `Rampage` movement and prop collision the server runs, then
- *   reconciled against the server's acknowledged position. It is drawn
+ * - **The local drake is predicted** in fixed steps at the room's tick rate,
+ *   with the same `Rampage` movement and prop collision the host runs, then
+ *   reconciled against the host's acknowledged position. (The host predicts
+ *   too: its own drake reaches the room over a loopback, like anyone's.) It is drawn
  *   between prediction steps, with any correction faded out over a few
  *   frames rather than snapped.
  * - **Other drakes** are replicas: a `DrakeSim` placed from interpolated
@@ -17,7 +18,7 @@
  */
 
 import * as pc from 'playcanvas';
-import { NetSession, type NetStatus } from './net/client';
+import { NetSession, type NetStatus, type SessionOptions } from './net/client';
 import { PLAYER_COLOURS, SERVER_TICK_HZ, type PlayerInfo, type Snapshot } from './net/protocol';
 import { DrakeSim } from './sim/drake';
 import { DwarfSim } from './sim/dwarf';
@@ -47,7 +48,7 @@ export type PartyDeps = {
   fx: Fx;
   camera: pc.Entity;
   rampage: () => Rampage;
-  /** Rebuild the village replica: first join, and every server restart. */
+  /** Rebuild the village replica: first join, every restart, every change of host. */
   rebuild: () => void;
   events: (events: RampageEvent[]) => void;
   status: (status: NetStatus, detail: string) => void;
@@ -72,8 +73,8 @@ export class Party {
   /** Largest correction applied, for the debug surface. */
   lastCorrection = 0;
 
-  constructor(private readonly deps: PartyDeps, url: string, readonly room: string, name: string, chapterCode = '') {
-    this.session = new NetSession(url, room, name, chapterCode);
+  constructor(private readonly deps: PartyDeps, readonly room: string, name: string, options: SessionOptions) {
+    this.session = new NetSession(room, name, options);
     this.session.onWelcome = () => {
       this.ready = true;
       deps.rebuild();
@@ -84,14 +85,12 @@ export class Party {
     this.session.onRoster = roster => this.renderRoster(roster);
     this.session.onStatus = status => {
       const detail = {
-        connecting: `Joining room ${room}…`,
-        open: `Joined room ${room}.`,
-        reconnecting: 'The page fluttered. Finding our place again…',
+        connecting: `Looking for room ${room}…`,
+        open: this.session.hosting ? `You hold the book for room ${room}. Share the code; friends' drakes arrive as they join.` : `Joined room ${room}.`,
+        reconnecting: 'The one holding the book has gone. Someone else takes it up, and the page begins again…',
         closed: 'The connection to the story was lost. Refresh to rejoin.',
         full: `Room ${room} is full: four drakes is the limit.`,
-        outdated: 'A newer edition of this book is out. Refresh the page to read it.',
-        busy: 'The storyteller is overwhelmed. Try again in a moment.',
-        'no-chapter': 'No chapter is bound by that code. Check it, or leave it blank for Little Kindling.'
+        outdated: 'Someone in this room reads a different edition of the book. Everyone should refresh the page.'
       }[status];
       deps.status(status, detail);
       this.renderRoster(this.session.roster);
@@ -138,7 +137,7 @@ export class Party {
     if (!this.connected) return;
     const rampage = this.deps.rampage();
 
-    // Fixed-step prediction, exactly one input per step, as the server does.
+    // Fixed-step prediction, exactly one input per step, as the host does.
     this.accumulator = Math.min(this.accumulator + frameDt, STEP * 8);
     while (this.accumulator >= STEP) {
       this.accumulator -= STEP;
@@ -149,7 +148,7 @@ export class Party {
       this.session.step(this.input, this.current);
     }
 
-    // Reconcile against the server's view of our last acknowledged input.
+    // Reconcile against the host's view of our last acknowledged input.
     const correction = this.session.reconciliation();
     if (correction) {
       const distance = Math.hypot(correction.dx, correction.dz);
@@ -235,7 +234,7 @@ export class Party {
       }
     }
 
-    // Replica dwarves: the server's list is the truth.
+    // Replica dwarves: the host's list is the truth.
     const present = new Set<number>();
     for (const d of sample.dwarves) {
       present.add(d.id);
@@ -301,7 +300,7 @@ export class Party {
         return `<li style="--colour:${colour.css}"><span class="party-dot"></span><span class="party-name">${escapeHtml(p.name)}${you}</span><span class="party-points">${points.get(p.player) ?? 0}</span></li>`;
       })
       .join('');
-    const ping = this.session.latencyMs ? ` · ${Math.round(this.session.latencyMs)} ms` : '';
+    const ping = this.session.hosting ? ' · you hold the book' : this.session.latencyMs ? ` · ${Math.round(this.session.latencyMs)} ms` : '';
     this.roster.innerHTML = `<div class="party-room">Room <b>${escapeHtml(this.room)}</b>${status === 'open' ? ping : ''}</div>` +
       `<ol class="party-list">${rows}</ol>` +
       (status === 'open' ? '<div class="party-hint">share the room code with friends</div>' : `<div class="party-hint">${status}</div>`);

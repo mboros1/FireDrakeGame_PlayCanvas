@@ -1,22 +1,26 @@
 /**
- * One village, simulated authoritatively for up to four drakes.
+ * One village, simulated authoritatively for up to four drakes, in the
+ * browser of whichever player hosts the room (see `lobby.ts`).
  *
  * The room runs exactly the simulation the single-player client runs —
  * `Rampage` over a `World` — at a fixed 30 Hz, fed by each player's latest
  * input. Clients never send positions; they send button bits and a look
- * angle, and render what the room tells them. That is the contract
- * `docs/ARCHITECTURE.md` sets for the netcode, kept here in TypeScript so it
- * ships now; forge can replace the simulation behind the same messages.
+ * angle, and render what the room tells them. The host's own client is a
+ * client like any other, over a loopback {@link Link}, so it gets no
+ * advantage and the code has one path.
+ *
+ * View-free: no PlayCanvas, and no transport. A {@link Link} is anything
+ * that can carry a string to one player.
  */
 
-import type { WebSocket } from 'ws';
-import { World } from '../src/sim/world';
-import { Rng } from '../src/sim/random';
-import { DrakeSim } from '../src/sim/drake';
-import { Rampage, type RampageEvent } from '../src/sim/rampage';
-import { spawnFor, toLevelFile, type LevelDefinition, type LevelFile } from '../src/sim/level';
-import { getLevel } from '../src/sim/levels';
-import { NO_INPUT, type Input, type Transform } from '../src/sim/types';
+import { World } from '../sim/world';
+import { Rng } from '../sim/random';
+import { DrakeSim } from '../sim/drake';
+import { Rampage, type RampageEvent } from '../sim/rampage';
+import { spawnFor, toLevelFile, type LevelDefinition, type LevelFile } from '../sim/level';
+import { getLevel } from '../sim/levels';
+import { NO_INPUT, type Input, type Transform } from '../sim/types';
+import { every } from './ticker';
 import {
   CLOSE_IDLE,
   cm,
@@ -33,13 +37,21 @@ import {
   type PropRow,
   type ServerMessage,
   type Snapshot
-} from '../src/net/protocol';
+} from './protocol';
+
+/** One player's connection to the room. */
+export interface Link {
+  readonly open: boolean;
+  send(data: string): void;
+  /** Tell the player why they are out, and stop sending to them. */
+  close(code: number): void;
+}
 
 const TICK = 1 / SERVER_TICK_HZ;
 const TICKS_PER_SNAPSHOT = Math.round(SERVER_TICK_HZ / SNAPSHOT_HZ);
 /**
- * A player whose socket sends nothing this long is dropped. Generous: a
- * backgrounded tab stops sending inputs, and the player may come back.
+ * A player who sends nothing this long is dropped. Generous: a backgrounded
+ * tab stops sending inputs, and the player may come back.
  */
 const IDLE_TIMEOUT_MS = 45_000;
 /** Most ticks to run in one timer callback when catching up after a stall. */
@@ -48,7 +60,7 @@ const MAX_CATCH_UP_TICKS = 4;
 const MAX_INPUTS_PER_SECOND = 90;
 
 type Player = {
-  socket: WebSocket;
+  link: Link;
   seat: number;
   name: string;
   drake: DrakeSim;
@@ -73,8 +85,8 @@ export class Room {
   private rng: Rng;
   private layout: LevelDefinition = getLevel();
   private rampage: Rampage;
-  private readonly players = new Map<WebSocket, Player>();
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private readonly players = new Map<Link, Player>();
+  private stopTimer: (() => void) | null = null;
   private tick = 0;
   private pending: RampageEvent[] = [];
   private seed: number;
@@ -105,9 +117,9 @@ export class Room {
     return this.players.size;
   }
 
-  join(socket: WebSocket, requestedName: string): boolean {
+  join(link: Link, requestedName: string): boolean {
     if (this.players.size >= MAX_PLAYERS) {
-      send(socket, { t: 'full' });
+      send(link, { t: 'full' });
       return false;
     }
     const taken = new Set([...this.players.values()].map(p => p.seat));
@@ -115,33 +127,40 @@ export class Room {
     while (taken.has(seat)) seat++;
     const name = (requestedName || '').replace(/[^\p{L}\p{N} _-]/gu, '').slice(0, 16) || `Drake ${seat + 1}`;
     const drake = this.spawnDrake(seat);
-    this.players.set(socket, { socket, seat, name, drake, input: { ...NO_INPUT }, lastSeen: Date.now(), inputBudget: MAX_INPUTS_PER_SECOND, ack: -1, queue: [] });
-    send(socket, { t: 'welcome', v: PROTOCOL_VERSION, player: seat, colour: seat, room: this.name, seed: this.seed, tickHz: SERVER_TICK_HZ, level: this.layout.id, chapter: this.chapter });
+    this.players.set(link, { link, seat, name, drake, input: { ...NO_INPUT }, lastSeen: Date.now(), inputBudget: MAX_INPUTS_PER_SECOND, ack: -1, queue: [] });
+    send(link, { t: 'welcome', v: PROTOCOL_VERSION, player: seat, colour: seat, room: this.name, seed: this.seed, tickHz: SERVER_TICK_HZ, level: this.layout.id, chapter: this.chapter });
     this.broadcastRoster();
-    if (!this.timer) {
+    if (!this.stopTimer) {
       this.lastTimer = performance.now();
       this.owed = 0;
-      this.timer = setInterval(() => this.pump(), 1000 / SERVER_TICK_HZ);
+      this.stopTimer = every(1000 / SERVER_TICK_HZ, () => this.pump());
     }
     return true;
   }
 
-  leave(socket: WebSocket) {
-    const player = this.players.get(socket);
+  leave(link: Link) {
+    const player = this.players.get(link);
     if (!player) return;
-    this.players.delete(socket);
+    this.players.delete(link);
     this.rampage.removeDrake(player.drake);
     this.world.destroy(player.drake.id);
     this.broadcastRoster();
     if (this.players.size === 0) {
-      if (this.timer) clearInterval(this.timer);
-      this.timer = null;
+      this.stopTimer?.();
+      this.stopTimer = null;
       this.onEmpty(this);
     }
   }
 
-  receive(socket: WebSocket, message: ClientMessage) {
-    const player = this.players.get(socket);
+  /** Stop the clock for good: the host is handing the room over or leaving. */
+  close() {
+    this.stopTimer?.();
+    this.stopTimer = null;
+    this.players.clear();
+  }
+
+  receive(link: Link, message: ClientMessage) {
+    const player = this.players.get(link);
     if (!player) return;
     player.lastSeen = Date.now();
     switch (message.t) {
@@ -157,7 +176,7 @@ export class Room {
         this.restart();
         break;
       case 'ping':
-        send(socket, { t: 'pong', at: message.at });
+        send(link, { t: 'pong', at: message.at });
         break;
       default:
         break;
@@ -210,8 +229,8 @@ export class Room {
     const now = Date.now();
     for (const player of [...this.players.values()]) {
       if (now - player.lastSeen > IDLE_TIMEOUT_MS) {
-        player.socket.close(CLOSE_IDLE, 'idle');
-        this.leave(player.socket);
+        player.link.close(CLOSE_IDLE);
+        this.leave(player.link);
       }
       // Refill a second's worth of input allowance a tick at a time.
       player.inputBudget = Math.min(MAX_INPUTS_PER_SECOND, player.inputBudget + MAX_INPUTS_PER_SECOND / SERVER_TICK_HZ);
@@ -282,13 +301,13 @@ export class Room {
   private broadcast(message: ServerMessage) {
     const data = JSON.stringify(message);
     for (const player of this.players.values()) {
-      if (player.socket.readyState === 1) player.socket.send(data);
+      if (player.link.open) player.link.send(data);
     }
   }
 }
 
-const send = (socket: WebSocket, message: ServerMessage) => {
-  if (socket.readyState === 1) socket.send(JSON.stringify(message));
+const send = (link: Link, message: ServerMessage) => {
+  if (link.open) link.send(JSON.stringify(message));
 };
 
 /** Stable seed per room name, so a room's dwarves are reproducible. */

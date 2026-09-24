@@ -1,5 +1,5 @@
 /**
- * The browser's end of a multiplayer room.
+ * One player's end of a multiplayer room, whoever hosts it.
  *
  * Sends this player's input, buffers the room's snapshots, and answers two
  * questions for the frame loop:
@@ -8,29 +8,31 @@
  *   {@link INTERPOLATION_DELAY_MS} in the past, between the two snapshots that
  *   bracket that moment, so they glide instead of stepping at 15 Hz.
  * - **Where should I be?** The local drake is predicted locally for
- *   responsiveness. Each snapshot says which input the server had applied
- *   (`ack`); comparing the server's position with where this client predicted
+ *   responsiveness. Each snapshot says which input the host had applied
+ *   (`ack`); comparing the host's position with where this client predicted
  *   itself *when it sent that input* gives the prediction error without the
  *   latency baked in, and the caller eases it away.
  *
- * View-free: no PlayCanvas here, so this stays testable against a real
- * server from Node.
+ * The {@link Lobby} underneath finds or becomes the host and carries the
+ * messages; this class neither knows nor cares which. View-free: no
+ * PlayCanvas here.
  */
 
 import type { LevelFile } from '../sim/level';
 import {
-  CLOSE_BUSY,
-  CLOSE_NO_CHAPTER,
   CLOSE_FULL,
   CLOSE_OUTDATED,
   encodeInput,
   PROTOCOL_VERSION,
+  type ClientMessage,
   type DrakeRow,
   type DwarfRow,
   type PlayerInfo,
   type ServerMessage,
   type Snapshot
 } from './protocol';
+import { Lobby } from './lobby';
+import type { MeshFactory } from './mesh';
 import type { Input } from '../sim/types';
 
 /** How far behind the newest snapshot remote entities are drawn. */
@@ -38,29 +40,37 @@ export const INTERPOLATION_DELAY_MS = 110;
 const HISTORY = 128;
 
 /**
- * `reconnecting` is transient: the session retries on its own. `closed`,
- * `full`, `outdated` and `busy` are final until the player acts.
+ * `connecting` covers finding the room and its host. `reconnecting` is
+ * transient: the host changed or the network blinked, and the session finds
+ * its place on its own. `closed`, `full` and `outdated` are final until the
+ * player acts.
  */
-export type NetStatus = 'connecting' | 'open' | 'reconnecting' | 'closed' | 'full' | 'outdated' | 'busy' | 'no-chapter';
-
-/** Retry delays after an unexpected drop; then give up and say so. */
-const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000, 15000];
+export type NetStatus = 'connecting' | 'open' | 'reconnecting' | 'closed' | 'full' | 'outdated';
 
 type Timed = { at: number; snapshot: Snapshot };
 
 export type RemoteDrake = { player: number; x: number; z: number; yaw: number; speed: number; breathing: boolean };
 export type RemoteDwarf = { id: number; x: number; y: number; z: number; yaw: number; burn: number; airborne: boolean; stunned: boolean; spin: number; launches: number };
 
+export type SessionOptions = {
+  mesh: MeshFactory;
+  /** How long to listen for a host before hosting: long enough for a real WebRTC handshake. */
+  seekMs: number;
+  /** The chapter to play, if this player ends up opening the room. */
+  chapter?: LevelFile;
+};
+
 export class NetSession {
   status: NetStatus = 'connecting';
   player = -1;
   room = '';
-  /** The level the room is playing, from the server. */
+  /** The level the room is playing, from its host. */
   level = '';
   /** The room's chapter, when it plays a bound one rather than a built-in. */
   chapter: LevelFile | null = null;
   roster: PlayerInfo[] = [];
   latencyMs = 0;
+  readonly lobby: Lobby;
 
   onWelcome: () => void = () => {};
   onSnapshot: (snapshot: Snapshot) => void = () => {};
@@ -68,11 +78,7 @@ export class NetSession {
   onRoster: (roster: PlayerInfo[]) => void = () => {};
   onStatus: (status: NetStatus) => void = () => {};
 
-  private socket!: WebSocket;
-  private readonly url: URL;
-  private attempt = 0;
   private closing = false;
-  private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly buffer: Timed[] = [];
   private seq = 0;
   private reconciledTick = -1;
@@ -80,56 +86,47 @@ export class NetSession {
   private readonly history = new Map<number, { x: number; z: number; yaw: number }>();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(url: string, room: string, private readonly name: string, chapterCode = '') {
-    this.url = new URL(url);
-    this.url.searchParams.set('room', room);
-    if (chapterCode) this.url.searchParams.set('chapter', chapterCode);
-    this.url.searchParams.set('name', name);
-    this.url.searchParams.set('v', String(PROTOCOL_VERSION));
-    this.connect();
+  constructor(room: string, private readonly name: string, options: SessionOptions) {
+    this.room = room;
+    this.lobby = new Lobby(options.mesh, room, options.chapter, {
+      connected: () => {
+        this.setStatus('open');
+        this.send({ t: 'hello', v: PROTOCOL_VERSION, name: this.name });
+        if (this.pingTimer) clearInterval(this.pingTimer);
+        this.pingTimer = setInterval(() => this.send({ t: 'ping', at: performance.now() }), 2000);
+      },
+      message: message => this.receive(message),
+      lost: () => {
+        if (!this.closing) this.setStatus('reconnecting');
+      },
+      shut: code => {
+        if (code === CLOSE_FULL) return this.setStatus('full');
+        if (code === CLOSE_OUTDATED) return this.setStatus('outdated');
+        // Idle, or anything else: say hello again.
+        this.setStatus('reconnecting');
+        setTimeout(() => {
+          if (!this.closing) this.send({ t: 'hello', v: PROTOCOL_VERSION, name: this.name });
+        }, 500);
+      }
+    }, { seekMs: options.seekMs });
+    void this.lobby.start().catch(() => this.setStatus('closed'));
   }
 
-  private connect() {
-    const socket = new WebSocket(this.url);
-    this.socket = socket;
-    socket.addEventListener('open', () => {
-      this.attempt = 0;
-      this.setStatus('open');
-      this.send({ t: 'hello', v: PROTOCOL_VERSION, name: this.name });
-      if (this.pingTimer) clearInterval(this.pingTimer);
-      this.pingTimer = setInterval(() => this.send({ t: 'ping', at: performance.now() }), 2000);
-    });
-    socket.addEventListener('message', event => {
-      if (socket === this.socket) this.receive(JSON.parse(String(event.data)) as ServerMessage);
-    });
-    socket.addEventListener('close', event => {
-      if (socket !== this.socket) return;
-      if (this.pingTimer) clearInterval(this.pingTimer);
-      this.pingTimer = null;
-      if (this.closing) return this.setStatus('closed');
-      if (event.code === CLOSE_FULL || this.status === 'full') return this.setStatus('full');
-      if (event.code === CLOSE_OUTDATED) return this.setStatus('outdated');
-      if (event.code === CLOSE_BUSY) return this.setStatus('busy');
-      if (event.code === CLOSE_NO_CHAPTER) return this.setStatus('no-chapter');
-      // Anything else (a network change, a redeploy, a sleeping phone) is
-      // worth retrying. The room keeps running for whoever stayed.
-      const delay = RECONNECT_DELAYS_MS[this.attempt];
-      if (delay === undefined) return this.setStatus('closed');
-      this.attempt++;
-      this.setStatus('reconnecting');
-      this.retryTimer = setTimeout(() => this.connect(), delay);
-    });
+  /** True when this player's browser is running the room for everyone. */
+  get hosting() {
+    return this.lobby.hosting;
   }
 
   close() {
     this.closing = true;
-    if (this.retryTimer) clearTimeout(this.retryTimer);
-    this.socket.close();
+    if (this.pingTimer) clearInterval(this.pingTimer);
+    this.lobby.leave();
+    this.setStatus('closed');
   }
 
-  /** Debug: drop the socket as a flaky network would, without meaning to leave. */
+  /** Debug: drop off the mesh as a flaky network would, without meaning to leave. */
   simulateDrop() {
-    this.socket.close();
+    void this.lobby.simulateDrop();
   }
 
   requestRestart() {
@@ -138,7 +135,7 @@ export class NetSession {
 
   /**
    * One fixed prediction step happened locally: send the input it used and
-   * remember where it left the drake, keyed by sequence number. The server
+   * remember where it left the drake, keyed by sequence number. The host
    * applies inputs one per tick in the same order, so when it acknowledges
    * `seq`, its drake and `history[seq]` should agree.
    */
@@ -151,7 +148,7 @@ export class NetSession {
   }
 
   /**
-   * The local drake's prediction error at the server's newest acknowledged
+   * The local drake's prediction error at the host's newest acknowledged
    * input, or null if there is nothing new to correct. Each snapshot is
    * reported once. The caller moves the drake (and this history) by the
    * error, so later comparisons measure only new drift.
@@ -174,7 +171,7 @@ export class NetSession {
     return correction;
   }
 
-  /** Server's view of the local drake, for large corrections. */
+  /** The host's view of the local drake, for large corrections. */
   localRow(): DrakeRow | null {
     const latest = this.buffer.at(-1)?.snapshot;
     return latest?.drakes.find(d => d[0] === this.player) ?? null;
@@ -239,7 +236,6 @@ export class NetSession {
         this.history.clear();
         this.reconciledTick = -1;
         this.player = message.player;
-        this.room = message.room;
         this.level = message.level;
         this.chapter = message.chapter ?? null;
         this.onWelcome();
@@ -272,8 +268,8 @@ export class NetSession {
     }
   }
 
-  private send(message: object) {
-    if (this.socket.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(message));
+  private send(message: ClientMessage) {
+    this.lobby.send(message);
   }
 
   private setStatus(status: NetStatus) {

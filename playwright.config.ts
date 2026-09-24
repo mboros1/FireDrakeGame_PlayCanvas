@@ -24,16 +24,6 @@ export default defineConfig({
       url: 'http://127.0.0.1:4173',
       reuseExistingServer: true,
       timeout: 120_000
-    },
-    {
-      // The room server, for tests/multiplayer.spec.ts. 8787 because 8080
-      // is commonly taken on development machines.
-      command: 'npm run server:dev',
-      url: 'http://127.0.0.1:8787/health',
-      // A scratch database, and room for the suite's own binds.
-      env: { CHAPTERS_DB: 'test-results/.chapters.db', BINDS_PER_HOUR: '1000' },
-      reuseExistingServer: true,
-      timeout: 120_000
     }
   ]
 });

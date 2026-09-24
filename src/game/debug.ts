@@ -121,7 +121,9 @@ export function installDebugApi(ctx: DebugContext) {
           latencyMs: Math.round(party.session.latencyMs),
           players: party.session.roster.length,
           remoteDrakes: party.session.roster.length - 1,
-          lastCorrection: party.lastCorrection
+          lastCorrection: party.lastCorrection,
+          hosting: party.session.hosting,
+          handovers: party.session.lobby.handovers
         } : null,
         nearestDwarf: nearest('dwarf', true),
         extracted: { ...ctx.extracted() },

@@ -1,6 +1,6 @@
 /**
- * Wire protocol between the browser and the room server. This module must
- * never import `playcanvas`: the server bundles it.
+ * Wire protocol between each player and the room's host (see `lobby.ts`).
+ * View-free: no `playcanvas` here, so it stays testable from Node.
  *
  * JSON, deliberately. At this game's scale (a few drakes, a dozen dwarves,
  * a hundred-odd props) a snapshot is a couple of kilobytes at 15 Hz, and JSON
@@ -16,21 +16,19 @@ import type { Input } from '../sim/types';
 import type { LevelFile } from '../sim/level';
 
 /**
- * Bump when a message shape changes incompatibly. Clients send it when they
- * connect; a mismatch is refused with {@link CLOSE_OUTDATED} so a stale cached
- * page says "refresh" instead of misreading snapshots.
+ * Bump when a message shape changes incompatibly. Hosts announce it and
+ * players send it in `hello`; a mismatch is refused with
+ * {@link CLOSE_OUTDATED} so mismatched editions say "refresh" instead of
+ * misreading snapshots.
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
-/** WebSocket close codes the server uses, so the client can explain. */
+/** Why a host shut a player out, so the player's page can explain. */
 export const CLOSE_IDLE = 4000;
 export const CLOSE_FULL = 4001;
 export const CLOSE_OUTDATED = 4002;
-export const CLOSE_BUSY = 4003;
-/** The chapter a new room was asked to play is not bound. */
-export const CLOSE_NO_CHAPTER = 4004;
 
-/** Server simulation rate. Clients render faster and interpolate. */
+/** The room's simulation rate. Clients render faster and interpolate. */
 export const SERVER_TICK_HZ = 30;
 /** Snapshots per second. Every other tick. */
 export const SNAPSHOT_HZ = 15;
@@ -44,7 +42,7 @@ export const PLAYER_COLOURS = [
   { name: 'Violet', css: '#8a5cc7', tint: [.85, .6, 1.3] }
 ] as const;
 
-// ── Client → server ─────────────────────────────────────────────────────────
+// ── Player → host ──────────────────────────────────────────────────────────
 
 export type ClientMessage =
   | { t: 'hello'; v: number; name: string }
@@ -73,11 +71,11 @@ export const decodeInput = (m: Extract<ClientMessage, { t: 'input' }>, into: Inp
 
 const clampUnit = (v: number) => (Number.isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0);
 
-// ── Server → client ─────────────────────────────────────────────────────────
+// ── Host → player ──────────────────────────────────────────────────────────
 
 /**
  * [player, x, z, yaw, speed, flags, ack] — flags: 1 breathed this tick,
- * 2 breathing held. `ack` is the last input sequence number the server had
+ * 2 breathing held. `ack` is the last input sequence number the host had
  * applied for that player, which the owning client uses to reconcile.
  */
 export type DrakeRow = [number, number, number, number, number, number, number];

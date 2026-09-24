@@ -1,8 +1,8 @@
 /**
  * Chapter drafts kept in this browser. The desk autosaves here after every
  * edit; export and import move a draft between browsers as a
- * `.chapter.json` file. Binding a chapter to the server comes later and
- * will read the same shape.
+ * `.chapter.json` file. Binding turns a draft into a chapter code
+ * (`src/chapters/code.ts`), which carries the same shape.
  *
  * Storage can be missing (private windows) or full; every access is guarded
  * and failure is reported, never thrown into the game.
@@ -83,9 +83,10 @@ export const saveDraft = (level: LevelDefinition): boolean => {
   return write(store);
 };
 
-const BINDINGS_KEY = 'fire-drake:chapter-bindings';
+/** Versioned: the first key held server codes, which no longer open anything. */
+const BINDINGS_KEY = 'fire-drake:chapter-bindings-2';
 
-/** Codes a draft has been bound as, newest first. Each bind is a new code. */
+/** Nicknames a draft has been bound as, newest first. Each bind of a changed draft is a new chapter. */
 export const bindingsFor = (draftId: string): { code: string; at: number }[] => {
   try {
     const all = JSON.parse(localStorage.getItem(BINDINGS_KEY) ?? '{}') as Record<string, { code: string; at: number }[]>;

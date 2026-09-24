@@ -2,10 +2,11 @@
 
 Read `SESSION_HANDOFF.md` and `docs/ARCHITECTURE.md` before changing this
 project. The handoff covers current state; the architecture doc covers the
-client/server target and the decisions behind it.
+target and the decisions behind it.
 
-This is the browser client for Fire Drake Simulator, targeting multiplayer
-client/server. Linked projects:
+This is Fire Drake Simulator, a self-contained browser game: multiplayer
+rooms are hosted in one player's browser (WebRTC, found over public Nostr
+relays) and there is no server. Linked projects:
 
 - `/Users/martinboros/SRC/void_forge-ws/forge-trunk` — **forge**, the in-house
   deterministic fixed-point engine. It is Fire Drake's simulation substrate.
